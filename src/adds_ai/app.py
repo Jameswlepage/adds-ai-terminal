@@ -47,6 +47,10 @@ class UI:
         self.refresh_ms = refresh_ms
         self.no_ansi = no_ansi
         self.lines: List[str] = []
+        self.mode = "splash"  # splash | chat
+        self.splash_input = ""
+        self.splash_input_limit = max(8, min(self.cols - 20, 40))
+        self.user_label = "YOU"
         self.input_buf = ""
         self.status = "Idle"
         self.show_ctx = True
@@ -54,11 +58,28 @@ class UI:
         self.session_tokens = 0
         self.session_cost = 0.0
         self.interrupted = False
+        self.history: List[dict] = []  # Conversation history
+        self.max_history = 20  # Max messages to keep
+        self.commands = [
+            "/help", "/new", "/clear", "/quit", "/preset", "/ctx", "/tutorial", "/search"
+        ]
 
     def add_block(self, prefix: str, text: str) -> None:
         for ln in wrap(prefix + text, self.cols):
             self.lines.append(ln[: self.cols])
         self.lines.append("")
+
+    def user_prefix(self) -> str:
+        return f"{self.user_label}: "
+
+    def add_to_history(self, role: str, content: str) -> None:
+        self.history.append({"role": role, "content": content})
+        # Trim to max_history (keep pairs to maintain context)
+        while len(self.history) > self.max_history:
+            self.history.pop(0)
+
+    def clear_history(self) -> None:
+        self.history.clear()
 
     def render_plain(self) -> bytes:
         top = 0
@@ -73,7 +94,73 @@ class UI:
         buf.append("> " + self.input_buf)
         return ("\n".join(buf) + "\n").encode(errors="ignore")
 
+    def render_splash(self) -> bytes:
+        art = [
+            "    ___    ____   ____   ____      _      ___   ___ ",
+            "   /   |  / __ \\ / __ \\ / __ )    | |    /   | /   |",
+            "  / /| | / / / // / / // __  |    | |   / /| |/ /| |",
+            " / ___ |/ /_/ // /_/ // /_/ / _   | |__/ ___ / ___ |",
+            "/_/  |_|\\____/ \\____//_____/ (_)  |____/_/  /_/  |_|",
+        ]
+        subheader = "Analog Data Dialogue System // Serial Intelligence Console"
+        call_sign_label = "call sign"
+        prompt = self.splash_input[: self.splash_input_limit]
+
+        if self.no_ansi:
+            lines: List[str] = []
+            lines.extend(art)
+            lines.append(subheader)
+            lines.append("")
+            lines.append(f"[{call_sign_label}]> {prompt}")
+            lines.append("(press Enter to link, /quit to exit)")
+            return ("\n".join(lines) + "\n").encode(errors="ignore")
+
+        b = bytearray()
+        b += ansi.hide_cursor()
+        b += ansi.clear()
+
+        start_row = 2
+        max_art_width = max(len(a) for a in art)
+        col_offset = max(1, (self.cols - max_art_width) // 2 + 1)
+
+        for idx, line in enumerate(art):
+            b += ansi.move(start_row + idx, col_offset)
+            b += line[: self.cols].encode(errors="ignore")
+
+        sub_col = max(1, (self.cols - len(subheader)) // 2 + 1)
+        b += ansi.move(start_row + len(art) + 1, sub_col)
+        b += subheader[: self.cols].encode(errors="ignore")
+
+        box_width = max(20, min(self.cols - 8, 68))
+        box_col = max(1, (self.cols - box_width) // 2 + 1)
+        box_top = start_row + len(art) + 3
+        horiz = "+" + "-" * (box_width - 2) + "+"
+        b += ansi.move(box_top, box_col)
+        b += horiz.encode()
+
+        label = f"| {call_sign_label}: "
+        field_width = box_width - len(label) - 2
+        trimmed = prompt[:field_width]
+        field = (label + trimmed).ljust(box_width - 1) + "|"
+        b += ansi.move(box_top + 1, box_col)
+        b += field.encode(errors="ignore")
+
+        b += ansi.move(box_top + 2, box_col)
+        b += horiz.encode()
+
+        help_line = "(Enter to link, /quit to exit)"
+        help_col = max(1, (self.cols - len(help_line)) // 2 + 1)
+        b += ansi.move(box_top + 4, help_col)
+        b += help_line[: self.cols].encode(errors="ignore")
+
+        cursor_col = box_col + len(label) + len(trimmed)
+        b += ansi.move(box_top + 1, cursor_col)
+        b += ansi.show_cursor()
+        return bytes(b)
+
     def render(self) -> bytes:
+        if self.mode == "splash":
+            return self.render_splash()
         if self.no_ansi:
             return self.render_plain()
 
@@ -100,15 +187,27 @@ class UI:
             if i < len(view):
                 b += view[i].encode(errors="ignore")
 
-        # status
+        # status bar (with command suggestions when typing /)
         b += ansi.rev(True)
         b += ansi.move(self.rows - 1, 1)
-        ctx_note = ""
-        if self.last_matches:
-            ctx_note = " | ctx:on" if self.show_ctx else " | ctx:off"
-        cost_str = f" | ${self.session_cost:.4f}" if self.session_cost > 0 else ""
-        tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
-        st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
+
+        # Check for command suggestions
+        cmd_hint = ""
+        if self.input_buf.startswith("/") and len(self.input_buf) > 0:
+            matches = [c for c in self.commands if c.startswith(self.input_buf)]
+            if matches and self.input_buf not in self.commands:
+                cmd_hint = "  ".join(matches[:4])
+
+        if cmd_hint:
+            st = f" {cmd_hint} "
+        else:
+            ctx_note = ""
+            if self.last_matches:
+                ctx_note = " | ctx:on" if self.show_ctx else " | ctx:off"
+            cost_str = f" | ${self.session_cost:.4f}" if self.session_cost > 0 else ""
+            tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
+            st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
+
         b += st[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
 
@@ -120,6 +219,14 @@ class UI:
 
         b += ansi.show_cursor()
         return bytes(b)
+
+    def start_chat(self) -> None:
+        name = self.splash_input.strip() or "Operator"
+        self.user_label = name.upper()
+        self.mode = "chat"
+        self.lines.clear()
+        self.add_block("SYS: ", f"Linked as {self.user_label}. Type /help for commands.")
+        self.splash_input = ""
 
 
 def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_text: str, user_msg: str, kb, web_search: bool = False) -> None:
@@ -143,10 +250,13 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
         system_block_parts.append(retrieval_context)
     system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
 
-    payload = [
-        {"role": "system", "content": system_block},
-        {"role": "user", "content": user_msg},
-    ]
+    # Build payload with conversation history
+    payload = [{"role": "system", "content": system_block}]
+    payload.extend(ui.history)  # Add conversation history
+    payload.append({"role": "user", "content": user_msg})
+
+    # Add user message to history
+    ui.add_to_history("user", user_msg)
 
     stream = llm.stream(model=ui.model, input_payload=payload, web_search=web_search)
 
@@ -178,8 +288,12 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
 
     # Final render
     elapsed_ms = int((time.time() - start) * 1000)
+    response_text = "".join(out).strip()
     del ui.lines[ai_block_start:]
-    ui.add_block("AI: ", "".join(out).strip())
+    ui.add_block("AI: ", response_text)
+
+    # Add AI response to history
+    ui.add_to_history("assistant", response_text)
 
     # Show citations if any
     if final_result and final_result.citations:
@@ -226,7 +340,6 @@ def main():
         refresh_ms=args.refresh_ms,
         no_ansi=args.no_ansi,
     )
-    ui.add_block("SYS: ", "Ready. Type /help for commands.")
 
     llm = OpenAIClient()
     write_bytes(fd, ui.render())
@@ -247,6 +360,14 @@ def main():
 
         # Enter
         if c in (10, 13):
+            if ui.mode == "splash":
+                line = ui.splash_input.strip()
+                if line in ("/q", "/quit"):
+                    return
+                ui.start_chat()
+                flush()
+                continue
+
             line = ui.input_buf.strip()
             ui.input_buf = ""
             if not line:
@@ -262,7 +383,11 @@ def main():
                     ui.lines.clear()
                     ui.add_block("SYS: ", "Cleared.")
                 elif cmd[0] == "/help":
-                    ui.add_block("SYS: ", "Commands: /help /clear /quit /preset [name] /ctx /tutorial /search [query] | ESC to stop")
+                    ui.add_block("SYS: ", "Commands: /help /new /clear /quit /preset [name] /ctx /tutorial /search [query] | ESC to stop")
+                elif cmd[0] == "/new":
+                    ui.clear_history()
+                    ui.lines.clear()
+                    ui.add_block("SYS: ", "New conversation started.")
                 elif cmd[0] == "/preset":
                     if len(cmd) == 1:
                         names = ", ".join(presets.keys()) if presets else "(none)"
@@ -293,7 +418,7 @@ def main():
                     if not query:
                         ui.add_block("SYS: ", "Usage: /search <query>")
                     else:
-                        ui.add_block("YOU: ", f"[search] {query}")
+                        ui.add_block(ui.user_prefix(), f"[search] {query}")
                         do_stream(
                             ui, llm, fd, system_prompt, preset_text,
                             query, kb, web_search=True
@@ -306,25 +431,75 @@ def main():
                 continue
 
             # normal chat
-            ui.add_block("YOU: ", line)
+            ui.add_block(ui.user_prefix(), line)
             do_stream(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
             continue
 
-        # Backspace / DEL
-        if c in (8, 127):
-            ui.input_buf = ui.input_buf[:-1]
+        # Backspace / DEL (handle multiple codes)
+        if c in (8, 127, 0x08, 0x7f):
+            if ui.mode == "splash":
+                ui.splash_input = ui.splash_input[:-1]
+            else:
+                ui.input_buf = ui.input_buf[:-1]
             flush()
             continue
 
-        # Ctrl+U
+        # ESC - handle escape sequences (arrows, scroll, etc.)
+        if c == 27:
+            # Consume the rest of the escape sequence
+            r2, _, _ = select.select([fd], [], [], 0.05)
+            if r2:
+                seq = read_bytes(fd, 1)
+                if seq and seq[0] in (91, 79):  # '[' or 'O'
+                    # CSI or SS3 sequence - read until we get a letter
+                    while True:
+                        r3, _, _ = select.select([fd], [], [], 0.02)
+                        if not r3:
+                            break
+                        end = read_bytes(fd, 1)
+                        if not end:
+                            break
+                        # Letters A-Z or a-z terminate the sequence
+                        if 65 <= end[0] <= 90 or 97 <= end[0] <= 122:
+                            break
+            # ESC alone or sequence consumed - just ignore
+            continue
+
+        # Filter out escape sequence fragments that leaked through
+        # (common when scrolling fast - [A, [B, [C, [D, etc.)
+        if c == 91:  # '[' character
+            # Check if next char is a letter (escape sequence fragment)
+            r2, _, _ = select.select([fd], [], [], 0.02)
+            if r2:
+                next_ch = read_bytes(fd, 1)
+                if next_ch and (65 <= next_ch[0] <= 90 or 97 <= next_ch[0] <= 122):
+                    # It's an escape fragment like [A - discard both
+                    continue
+                # Not a fragment, but we consumed a char - need to handle it
+                # For now, just skip the '[' and let the next char be processed normally
+                # This means '[' followed by non-letter is also discarded
+            continue
+
+        # Ctrl+U - clear input
         if c == 21:
-            ui.input_buf = ""
+            if ui.mode == "splash":
+                ui.splash_input = ""
+            else:
+                ui.input_buf = ""
             flush()
+            continue
+
+        # Ignore other control characters
+        if c < 32:
             continue
 
         # printable ASCII only
         if 32 <= c <= 126:
-            ui.input_buf += chr(c)
+            if ui.mode == "splash":
+                if len(ui.splash_input) < ui.splash_input_limit:
+                    ui.splash_input += chr(c)
+            else:
+                ui.input_buf += chr(c)
             flush()
 
 

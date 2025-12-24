@@ -38,12 +38,14 @@ tutorial:
 
     COMMANDS:
     - /help - show available commands
-    - /clear - clear the conversation
+    - /new - start fresh conversation (clears history)
+    - /clear - clear screen only (keeps history)
     - /preset [name] - switch prompt preset (coding, research, ops)
     - /ctx - toggle knowledge base context on/off
     - /tutorial - show this guide
-    - /search [query] - web search (if enabled)
+    - /search [query] - web search with citations
     - /quit - exit
+    - ESC - interrupt AI response mid-stream
 
     FEATURES:
     - Streaming responses with live updates
