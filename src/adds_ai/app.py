@@ -51,6 +51,7 @@ class UI:
         self.splash_input = ""
         self.splash_input_limit = max(8, min(self.cols - 20, 40))
         self.user_label = "YOU"
+        self.user_name = "YOU"
         self.input_buf = ""
         self.status = "Idle"
         self.show_ctx = True
@@ -60,8 +61,23 @@ class UI:
         self.interrupted = False
         self.history: List[dict] = []  # Conversation history
         self.max_history = 20  # Max messages to keep
+        self.scroll_offset = 0
+        self.personalization_sent = False
+        self.personalization_note = ""
+        self.available_models: List[str] = [
+            "gpt-5.2-2025-12-11",
+            "gpt-5-nano-2025-08-07",
+        ]
         self.commands = [
-            "/help", "/new", "/clear", "/quit", "/preset", "/ctx", "/tutorial", "/search"
+            "/help",
+            "/new",
+            "/clear",
+            "/quit",
+            "/preset",
+            "/model",
+            "/ctx",
+            "/tutorial",
+            "/search",
         ]
 
     def add_block(self, prefix: str, text: str) -> None:
@@ -81,11 +97,28 @@ class UI:
     def clear_history(self) -> None:
         self.history.clear()
 
+    def viewport_height(self) -> int:
+        """Visible rows for the transcript area."""
+        if self.no_ansi:
+            return max(1, self.rows - 1)
+        return max(1, self.rows - 3)
+
+    def _clamp_scroll(self, height: int) -> None:
+        max_offset = max(len(self.lines) - height, 0)
+        if self.scroll_offset > max_offset:
+            self.scroll_offset = max_offset
+
+    def _view_slice(self, height: int) -> List[str]:
+        self._clamp_scroll(height)
+        start = max(len(self.lines) - height - self.scroll_offset, 0)
+        end = start + height
+        return self.lines[start:end]
+
     def render_plain(self) -> bytes:
         top = 0
         bottom = self.rows - 2
         height = bottom - top + 1
-        view = self.lines[-height:]
+        view = self._view_slice(height)
         buf = []
         buf.append(f"[ADDS AI Chat | model: {self.model}]")
         buf.append("")
@@ -96,14 +129,14 @@ class UI:
 
     def render_splash(self) -> bytes:
         art = [
-            "    ___    ____   ____   ____      _      ___   ___ ",
-            "   /   |  / __ \\ / __ \\ / __ )    | |    /   | /   |",
-            "  / /| | / / / // / / // __  |    | |   / /| |/ /| |",
-            " / ___ |/ /_/ // /_/ // /_/ / _   | |__/ ___ / ___ |",
-            "/_/  |_|\\____/ \\____//_____/ (_)  |____/_/  /_/  |_|",
+            "    ___              __                 ___    ____",
+            "   /   |  ____ ___  / /_  ___  _____   /   |  /  _/",
+            "  / /| | / __ `__ \\/ __ \\/ _ \\/ ___/  / /| |  / /  ",
+            " / ___ |/ / / / / / /_/ /  __/ /     / ___ |_/ /   ",
+            "/_/  |_/_/ /_/ /_/_.___/\\___/_/     /_/  |_/___/   ",
         ]
-        subheader = "Analog Data Dialogue System // Serial Intelligence Console"
-        call_sign_label = "call sign"
+        subheader = ""
+        call_sign_label = "Your Name"
         prompt = self.splash_input[: self.splash_input_limit]
 
         if self.no_ansi:
@@ -112,14 +145,15 @@ class UI:
             lines.append(subheader)
             lines.append("")
             lines.append(f"[{call_sign_label}]> {prompt}")
-            lines.append("(press Enter to link, /quit to exit)")
+            lines.append("(press Enter to login)")
             return ("\n".join(lines) + "\n").encode(errors="ignore")
 
         b = bytearray()
         b += ansi.hide_cursor()
         b += ansi.clear()
 
-        start_row = 2
+        total_height = len(art) + 1 + 3 + 1  # art + subheader + box + help
+        start_row = max(1, (self.rows - total_height) // 2 + 1)
         max_art_width = max(len(a) for a in art)
         col_offset = max(1, (self.cols - max_art_width) // 2 + 1)
 
@@ -127,13 +161,14 @@ class UI:
             b += ansi.move(start_row + idx, col_offset)
             b += line[: self.cols].encode(errors="ignore")
 
-        sub_col = max(1, (self.cols - len(subheader)) // 2 + 1)
-        b += ansi.move(start_row + len(art) + 1, sub_col)
-        b += subheader[: self.cols].encode(errors="ignore")
+        if subheader:
+            sub_col = max(1, (self.cols - len(subheader)) // 2 + 1)
+            b += ansi.move(start_row + len(art) + 1, sub_col)
+            b += subheader[: self.cols].encode(errors="ignore")
 
         box_width = max(20, min(self.cols - 8, 68))
         box_col = max(1, (self.cols - box_width) // 2 + 1)
-        box_top = start_row + len(art) + 3
+        box_top = start_row + len(art) + (3 if subheader else 1)
         horiz = "+" + "-" * (box_width - 2) + "+"
         b += ansi.move(box_top, box_col)
         b += horiz.encode()
@@ -148,7 +183,7 @@ class UI:
         b += ansi.move(box_top + 2, box_col)
         b += horiz.encode()
 
-        help_line = "(Enter to link, /quit to exit)"
+        help_line = "(Enter to login)"
         help_col = max(1, (self.cols - len(help_line)) // 2 + 1)
         b += ansi.move(box_top + 4, help_col)
         b += help_line[: self.cols].encode(errors="ignore")
@@ -171,7 +206,7 @@ class UI:
         # header
         b += ansi.rev(True)
         b += ansi.move(1, 1)
-        hdr = f" ADDS AI Chat | model: {self.model} | preset: {self.preset} | /help /clear /quit "
+        hdr = f" AMBER AI Chat | model: {self.model} | preset: {self.preset} | /help /clear /quit "
         b += hdr[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
 
@@ -179,7 +214,7 @@ class UI:
         top = 2
         bottom = self.rows - 2
         height = bottom - top + 1
-        view = self.lines[-height:]
+        view = self._view_slice(height)
 
         for i in range(height):
             b += ansi.move(top + i, 1)
@@ -223,13 +258,27 @@ class UI:
     def start_chat(self) -> None:
         name = self.splash_input.strip() or "Operator"
         self.user_label = name.upper()
+        self.user_name = name
+        self.personalization_note = f"Operator name: {name}. When asked who the user is, answer with this name."
+        self.personalization_sent = False
         self.mode = "chat"
         self.lines.clear()
-        self.add_block("SYS: ", f"Linked as {self.user_label}. Type /help for commands.")
+        self.add_block(
+            "SYS: ", f"Linked as {self.user_label}. Type /help for commands."
+        )
         self.splash_input = ""
 
 
-def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_text: str, user_msg: str, kb, web_search: bool = False) -> None:
+def do_stream(
+    ui: UI,
+    llm: OpenAIClient,
+    fd: int,
+    system_prompt: str,
+    preset_text: str,
+    user_msg: str,
+    kb,
+    web_search: bool = False,
+) -> None:
     """Handle streaming a response with ESC interrupt, citations, and token tracking."""
     from .ttyio import read_bytes, write_bytes
 
@@ -245,7 +294,20 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
     ui.last_matches = [m[0] for m in matches]
     retrieval_context = format_context(matches) if ui.show_ctx else ""
 
+    if not ui.personalization_sent and ui.personalization_note:
+        user_msg = f"{ui.personalization_note}\n\n{user_msg}"
+
+    # Auto-enable web search for news/current queries unless explicitly overridden
+    needs_web = web_search
+    if not needs_web:
+        text_l = user_msg.lower()
+        web_triggers = ["news", "headline", "latest", "current", "today", "this week", "breaking", "update"]
+        if any(t in text_l for t in web_triggers):
+            needs_web = True
+
     system_block_parts = [system_prompt, preset_text]
+    if not ui.personalization_sent and ui.personalization_note:
+        system_block_parts.append(ui.personalization_note)
     if retrieval_context:
         system_block_parts.append(retrieval_context)
     system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
@@ -258,7 +320,7 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
     # Add user message to history
     ui.add_to_history("user", user_msg)
 
-    stream = llm.stream(model=ui.model, input_payload=payload, web_search=web_search)
+    stream = llm.stream(model=ui.model, input_payload=payload, web_search=needs_web)
 
     ai_block_start = len(ui.lines)
     last_render = time.time()
@@ -303,6 +365,8 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
     if final_result:
         ui.session_tokens = llm.session_tokens
         ui.session_cost = llm.session_cost
+    if not ui.personalization_sent and ui.personalization_note:
+        ui.personalization_sent = True
 
     status_parts = ["Idle", f"{elapsed_ms}ms"]
     if ui.interrupted:
@@ -314,7 +378,11 @@ def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_tex
 def parse_args():
     env = load_config()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tty", required=True, help="TTY device path (e.g. /dev/ttys010 or /dev/ttyUSB0)")
+    ap.add_argument(
+        "--tty",
+        required=True,
+        help="TTY device path (e.g. /dev/ttys010 or /dev/ttyUSB0)",
+    )
     ap.add_argument("--cols", type=int, default=env.cols)
     ap.add_argument("--rows", type=int, default=env.rows)
     ap.add_argument("--model", default=env.model)
@@ -383,11 +451,15 @@ def main():
                     ui.lines.clear()
                     ui.add_block("SYS: ", "Cleared.")
                 elif cmd[0] == "/help":
-                    ui.add_block("SYS: ", "Commands: /help /new /clear /quit /preset [name] /ctx /tutorial /search [query] | ESC to stop")
+                    ui.add_block(
+                        "SYS: ",
+                        "Commands: /help /new /clear /quit /preset [name] /model [name] /ctx /tutorial /search [query] | ESC to stop",
+                    )
                 elif cmd[0] == "/new":
                     ui.clear_history()
                     ui.lines.clear()
                     ui.add_block("SYS: ", "New conversation started.")
+                    ui.personalization_sent = False
                 elif cmd[0] == "/preset":
                     if len(cmd) == 1:
                         names = ", ".join(presets.keys()) if presets else "(none)"
@@ -400,6 +472,19 @@ def main():
                             ui.add_block("SYS: ", f"Preset set to {name}")
                         else:
                             ui.add_block("SYS: ", f"Unknown preset: {name}")
+                elif cmd[0] == "/model":
+                    if len(cmd) == 1:
+                        models = ", ".join(ui.available_models)
+                        ui.add_block("SYS: ", f"Current model: {ui.model} | Available: {models}")
+                    else:
+                        name = " ".join(cmd[1:])
+                        if name.lower().startswith("gpt-4"):
+                            ui.add_block("SYS: ", "gpt-4* models are disabled.")
+                        else:
+                            ui.model = name
+                            if name not in ui.available_models:
+                                ui.available_models.append(name)
+                            ui.add_block("SYS: ", f"Model set to {name}")
                 elif cmd[0] == "/ctx":
                     ui.show_ctx = not ui.show_ctx
                     state = "on" if ui.show_ctx else "off"
@@ -408,9 +493,14 @@ def main():
                     # Use the tutorial preset for this message
                     tutorial_prompt = presets.get("tutorial", "Explain this system.")
                     do_stream(
-                        ui, llm, fd, system_prompt, tutorial_prompt,
+                        ui,
+                        llm,
+                        fd,
+                        system_prompt,
+                        tutorial_prompt,
                         "Give me a complete tutorial of ADDS AI.",
-                        kb, web_search=False
+                        kb,
+                        web_search=False,
                     )
                     continue
                 elif cmd[0] == "/search":
@@ -420,8 +510,14 @@ def main():
                     else:
                         ui.add_block(ui.user_prefix(), f"[search] {query}")
                         do_stream(
-                            ui, llm, fd, system_prompt, preset_text,
-                            query, kb, web_search=True
+                            ui,
+                            llm,
+                            fd,
+                            system_prompt,
+                            preset_text,
+                            query,
+                            kb,
+                            web_search=True,
                         )
                         continue
                 else:
@@ -432,11 +528,13 @@ def main():
 
             # normal chat
             ui.add_block(ui.user_prefix(), line)
-            do_stream(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
+            do_stream(
+                ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False
+            )
             continue
 
         # Backspace / DEL (handle multiple codes)
-        if c in (8, 127, 0x08, 0x7f):
+        if c in (8, 127, 0x08, 0x7F):
             if ui.mode == "splash":
                 ui.splash_input = ui.splash_input[:-1]
             else:
@@ -446,23 +544,25 @@ def main():
 
         # ESC - handle escape sequences (arrows, scroll, etc.)
         if c == 27:
-            # Consume the rest of the escape sequence
+            height = ui.viewport_height()
             r2, _, _ = select.select([fd], [], [], 0.05)
             if r2:
                 seq = read_bytes(fd, 1)
                 if seq and seq[0] in (91, 79):  # '[' or 'O'
-                    # CSI or SS3 sequence - read until we get a letter
-                    while True:
-                        r3, _, _ = select.select([fd], [], [], 0.02)
-                        if not r3:
-                            break
+                    r3, _, _ = select.select([fd], [], [], 0.05)
+                    if r3:
                         end = read_bytes(fd, 1)
-                        if not end:
-                            break
-                        # Letters A-Z or a-z terminate the sequence
-                        if 65 <= end[0] <= 90 or 97 <= end[0] <= 122:
-                            break
-            # ESC alone or sequence consumed - just ignore
+                        if end:
+                            if end[0] == 65:  # Up arrow
+                                ui.scroll_offset = min(
+                                    ui.scroll_offset + 1,
+                                    max(len(ui.lines) - height, 0),
+                                )
+                                flush()
+                            elif end[0] == 66:  # Down arrow
+                                ui.scroll_offset = max(ui.scroll_offset - 1, 0)
+                                flush()
+            # ESC alone or unhandled sequence - ignore
             continue
 
         # Filter out escape sequence fragments that leaked through

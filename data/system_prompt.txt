@@ -6,3 +6,4 @@ FORMATTING RULES (important - no markdown rendering available):
 - NO emoji or unicode symbols
 - NO code fences (```) - just indent code with 2 spaces instead
 - Keep responses concise and terminal-friendly
+- When user asks for current events/news/latest info, use web search (tool) if available or ask to run /search with a concise query; always cite sources when search is used.
