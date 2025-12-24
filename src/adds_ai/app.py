@@ -64,11 +64,18 @@ class UI:
         self.scroll_offset = 0
         self.personalization_sent = False
         self.personalization_note = ""
+        self.empty_state = False
         self.available_models: List[str] = [
             "gpt-5.2-2025-12-11",
             "gpt-5-nano-2025-08-07",
             "gpt-4o",
         ]
+        self.shortcuts = {
+            "/1": "search",
+            "/2": "ctx",
+            "/3": "tutorial",
+            "/4": "models",
+        }
         self.commands = [
             "/help",
             "/new",
@@ -97,6 +104,43 @@ class UI:
 
     def clear_history(self) -> None:
         self.history.clear()
+
+    def add_shortcut_grid(self, center: bool = True) -> None:
+        """Render a 2x2 grid of shortcut suggestions into the transcript."""
+        width = min(self.cols, 78)
+        gap = 4
+        cell_w = max(18, (width - gap - 4) // 2)
+        top = "+" + "-" * cell_w + "+"
+
+        def box_row(left: str, right: str) -> str:
+            return (
+                "|" + left[:cell_w].ljust(cell_w) + "|" + " " * gap + "|" + right[:cell_w].ljust(cell_w) + "|"
+            )
+
+        row_gap = " " * (len(top) * 2 + gap)
+        rows_top = [
+            top + " " * gap + top,
+            box_row("/1 Search web (/search <topic>)", "/2 Toggle context (/ctx)"),
+            box_row("Get current info with citations", "Turn retrieval context on/off"),
+            top + " " * gap + top,
+        ]
+        rows_bottom = [
+            top + " " * gap + top,
+            box_row("/3 Tutorial (/tutorial)", "/4 Models (/model <id>)"),
+            box_row("How to use AMBER AI", "List or set available models"),
+            top + " " * gap + top,
+        ]
+        rows = rows_top + [row_gap] + rows_bottom
+        grid_lines = rows + [""]
+
+        if center:
+            height = self.viewport_height()
+            remaining = height - len(self.lines) - len(grid_lines)
+            pad = max(0, remaining // 2)
+            self.lines.extend([""] * pad)
+
+        self.lines.extend(grid_lines)
+        self.empty_state = True
 
     def viewport_height(self) -> int:
         """Visible rows for the transcript area."""
@@ -259,6 +303,8 @@ class UI:
             cost_str = f" | ${self.session_cost:.4f}" if self.session_cost > 0 else ""
             tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
             st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
+            if self.empty_state:
+                st += " * At your fingers rests the world's knowledge. What will you create?"
 
         b += st[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
@@ -283,6 +329,7 @@ class UI:
         self.add_block(
             "SYS: ", f"Linked as {self.user_label}. Type /help for commands."
         )
+        self.add_shortcut_grid()
         self.splash_input = ""
 
 
@@ -473,6 +520,41 @@ def main():
             # commands
             if line.startswith("/"):
                 cmd = line.split()
+
+                # Shortcut grid commands
+                if line in ui.shortcuts:
+                    if line == "/1":
+                        ui.add_block("SYS: ", "Shortcut: /search <topic>. Type your query after /search.")
+                        ui.input_buf = "/search "
+                        flush()
+                        continue
+                    if line == "/2":
+                        ui.show_ctx = not ui.show_ctx
+                        state = "on" if ui.show_ctx else "off"
+                        ui.add_block("SYS: ", f"Retrieval context {state}")
+                        ui.status = "Idle"
+                        flush()
+                        continue
+                    if line == "/3":
+                        tutorial_prompt = presets.get("tutorial", "Explain this system.")
+                        do_stream(
+                            ui,
+                            llm,
+                            fd,
+                            system_prompt,
+                            tutorial_prompt,
+                            "Give me a complete tutorial of ADDS AI.",
+                            kb,
+                            web_search=False,
+                        )
+                        continue
+                    if line == "/4":
+                        models = ", ".join(ui.available_models)
+                        ui.add_block("SYS: ", f"Models: {models}. Set with /model <id>.")
+                        ui.input_buf = "/model "
+                        flush()
+                        continue
+
                 if cmd[0] in ("/q", "/quit"):
                     return
                 if cmd[0] == "/clear":
@@ -488,6 +570,7 @@ def main():
                     ui.lines.clear()
                     ui.add_block("SYS: ", "New conversation started.")
                     ui.personalization_sent = False
+                    ui.add_shortcut_grid()
                 elif cmd[0] == "/preset":
                     if len(cmd) == 1:
                         names = ", ".join(presets.keys()) if presets else "(none)"
@@ -552,6 +635,7 @@ def main():
                 continue
 
             # normal chat
+            ui.empty_state = False
             ui.add_block(ui.user_prefix(), line)
             do_stream(
                 ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False
