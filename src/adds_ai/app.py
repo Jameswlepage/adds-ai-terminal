@@ -108,23 +108,29 @@ class UI:
     def add_shortcut_grid(self, center: bool = True) -> None:
         """Render a 2x2 grid of shortcut suggestions into the transcript."""
         width = min(self.cols, 78)
-        gap = 2
-        cell_w = max(18, (width - 3 - gap) // 2)
-        top = "+" + "-" * cell_w + "+" + "-" * cell_w + "+"
-        def row(text_left: str, text_right: str) -> str:
+        gap = 4
+        cell_w = max(18, (width - gap - 4) // 2)
+        top = "+" + "-" * cell_w + "+"
+
+        def box_row(left: str, right: str) -> str:
             return (
-                "|" + text_left[:cell_w].ljust(cell_w) + "|" + " " * gap + "|" + text_right[:cell_w].ljust(cell_w) + "|"
+                "|" + left[:cell_w].ljust(cell_w) + "|" + " " * gap + "|" + right[:cell_w].ljust(cell_w) + "|"
             )
 
-        rows = [
-            top,
-            row("/1 Search web (/search <topic>)", "/2 Toggle context (/ctx)"),
-            row("Get current info with citations", "Turn retrieval context on/off"),
-            top,
-            row("/3 Tutorial (/tutorial)", "/4 Models (/model <id>)"),
-            row("How to use AMBER AI", "List or set available models"),
-            top,
+        row_gap = " " * (len(top) * 2 + gap)
+        rows_top = [
+            top + " " * gap + top,
+            box_row("/1 Search web (/search <topic>)", "/2 Toggle context (/ctx)"),
+            box_row("Get current info with citations", "Turn retrieval context on/off"),
+            top + " " * gap + top,
         ]
+        rows_bottom = [
+            top + " " * gap + top,
+            box_row("/3 Tutorial (/tutorial)", "/4 Models (/model <id>)"),
+            box_row("How to use AMBER AI", "List or set available models"),
+            top + " " * gap + top,
+        ]
+        rows = rows_top + [row_gap] + rows_bottom
         footer = "At your fingers rests the world's knowledge. What will you create?"
         grid_lines = rows + [footer[: self.cols], ""]
 
