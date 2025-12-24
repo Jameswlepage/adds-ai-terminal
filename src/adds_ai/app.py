@@ -229,16 +229,24 @@ class UI:
 
         # Check for command suggestions
         cmd_hint = ""
+        model_hint = ""
         if self.input_buf.startswith("/") and len(self.input_buf) > 0:
             matches = [c for c in self.commands if c.startswith(self.input_buf)]
             if matches and self.input_buf not in self.commands:
                 cmd_hint = "  ".join(matches[:4])
-        model_hint = ""
-        if not cmd_hint and self.input_buf.strip().startswith("/model"):
-            model_hint = "models: " + ", ".join(self.available_models)
+        if self.input_buf.strip().startswith("/model"):
+            raw = self.input_buf.strip()
+            partial = raw[len("/model"):].strip().lower()
+            filtered = [
+                m for m in self.available_models if partial in m.lower()
+            ] if partial else self.available_models
+            model_hint = "models: " + "  ".join(filtered)
 
         if cmd_hint:
-            st = f" {cmd_hint} "
+            st = f" {cmd_hint}"
+            if model_hint:
+                st += f" | {model_hint}"
+            st += " "
         elif model_hint:
             st = f" {model_hint} "
         else:
