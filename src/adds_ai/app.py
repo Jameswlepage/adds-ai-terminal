@@ -107,11 +107,12 @@ class UI:
     def add_shortcut_grid(self, center: bool = True) -> None:
         """Render a 2x2 grid of shortcut suggestions into the transcript."""
         width = min(self.cols, 78)
-        cell_w = max(18, (width - 3) // 2)
+        gap = 2
+        cell_w = max(18, (width - 3 - gap) // 2)
         top = "+" + "-" * cell_w + "+" + "-" * cell_w + "+"
         def row(text_left: str, text_right: str) -> str:
             return (
-                "|" + text_left[:cell_w].ljust(cell_w) + "|" + text_right[:cell_w].ljust(cell_w) + "|"
+                "|" + text_left[:cell_w].ljust(cell_w) + "|" + " " * gap + "|" + text_right[:cell_w].ljust(cell_w) + "|"
             )
 
         rows = [
