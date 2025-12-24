@@ -124,6 +124,8 @@ class UI:
             top,
         ]
         self.lines.extend(rows)
+        footer = "At your fingers rests the world's knowledge. What will you create?"
+        self.lines.append(footer[: self.cols])
         self.lines.append("")
 
     def viewport_height(self) -> int:
