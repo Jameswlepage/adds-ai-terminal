@@ -1,0 +1,15 @@
+[Unit]
+Description=ADDS AI Chat (serial console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/adds-ai.env
+WorkingDirectory=/opt/adds-ai
+ExecStart=/opt/adds-ai/.venv/bin/python -m adds_ai.app --tty /dev/ttyUSB0
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

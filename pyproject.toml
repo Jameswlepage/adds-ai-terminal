@@ -1,0 +1,21 @@
+[project]
+name = "adds-ai-terminal"
+version = "0.1.0"
+description = "Terminal-first AI chat appliance for ADDS serial terminals and PTY simulation."
+authors = [{ name = "James LePage" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.52.0",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+Homepage = "https://example.com"
