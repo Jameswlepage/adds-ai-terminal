@@ -65,6 +65,7 @@ class UI:
         self.personalization_sent = False
         self.personalization_note = ""
         self.available_models: List[str] = [
+            "gpt-4o",
             "gpt-5.2-2025-12-11",
             "gpt-5-nano-2025-08-07",
         ]
@@ -317,6 +318,8 @@ def do_stream(
     system_block_parts = [system_prompt, preset_text]
     if not ui.personalization_sent and ui.personalization_note:
         system_block_parts.append(ui.personalization_note)
+    if web_search:
+        system_block_parts.append("Use web search to answer this request and cite sources.")
     if retrieval_context:
         system_block_parts.append(retrieval_context)
     system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
@@ -487,13 +490,10 @@ def main():
                         ui.add_block("SYS: ", f"Current model: {ui.model} | Available: {models}")
                     else:
                         name = " ".join(cmd[1:])
-                        if name.lower().startswith("gpt-4"):
-                            ui.add_block("SYS: ", "gpt-4* models are disabled.")
-                        else:
-                            ui.model = name
-                            if name not in ui.available_models:
-                                ui.available_models.append(name)
-                            ui.add_block("SYS: ", f"Model set to {name}")
+                        ui.model = name
+                        if name not in ui.available_models:
+                            ui.available_models.append(name)
+                        ui.add_block("SYS: ", f"Model set to {name}")
                 elif cmd[0] == "/ctx":
                     ui.show_ctx = not ui.show_ctx
                     state = "on" if ui.show_ctx else "off"

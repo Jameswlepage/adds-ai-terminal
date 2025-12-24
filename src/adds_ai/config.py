@@ -15,7 +15,7 @@ class AppConfig:
 def load_config() -> AppConfig:
     cols = int(os.getenv("ADDS_COLS", "80"))
     rows = int(os.getenv("ADDS_ROWS", "24"))
-    model = os.getenv("OPENAI_MODEL", "gpt-5.2-2025-12-11")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
     refresh_ms = int(os.getenv("ADDS_REFRESH_MS", "100"))
     no_ansi = os.getenv("ADDS_NO_ANSI", "0") == "1"
     preset = os.getenv("ADDS_PRESET")
