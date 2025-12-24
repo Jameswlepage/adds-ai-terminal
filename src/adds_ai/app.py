@@ -69,6 +69,12 @@ class UI:
             "gpt-5-nano-2025-08-07",
             "gpt-4o",
         ]
+        self.shortcuts = {
+            "/1": "search",
+            "/2": "ctx",
+            "/3": "tutorial",
+            "/4": "models",
+        }
         self.commands = [
             "/help",
             "/new",
@@ -97,6 +103,28 @@ class UI:
 
     def clear_history(self) -> None:
         self.history.clear()
+
+    def add_shortcut_grid(self) -> None:
+        """Render a 2x2 grid of shortcut suggestions into the transcript."""
+        width = min(self.cols, 78)
+        cell_w = max(18, (width - 3) // 2)
+        top = "+" + "-" * cell_w + "+" + "-" * cell_w + "+"
+        def row(text_left: str, text_right: str) -> str:
+            return (
+                "|" + text_left[:cell_w].ljust(cell_w) + "|" + text_right[:cell_w].ljust(cell_w) + "|"
+            )
+
+        rows = [
+            top,
+            row("/1 Search web (/search <topic>)", "/2 Toggle context (/ctx)"),
+            row("Get current info with citations", "Turn retrieval context on/off"),
+            top,
+            row("/3 Tutorial (/tutorial)", "/4 Models (/model <id>)"),
+            row("How to use AMBER AI", "List or set available models"),
+            top,
+        ]
+        self.lines.extend(rows)
+        self.lines.append("")
 
     def viewport_height(self) -> int:
         """Visible rows for the transcript area."""
@@ -283,6 +311,7 @@ class UI:
         self.add_block(
             "SYS: ", f"Linked as {self.user_label}. Type /help for commands."
         )
+        self.add_shortcut_grid()
         self.splash_input = ""
 
 
@@ -473,6 +502,41 @@ def main():
             # commands
             if line.startswith("/"):
                 cmd = line.split()
+
+                # Shortcut grid commands
+                if line in ui.shortcuts:
+                    if line == "/1":
+                        ui.add_block("SYS: ", "Shortcut: /search <topic>. Type your query after /search.")
+                        ui.input_buf = "/search "
+                        flush()
+                        continue
+                    if line == "/2":
+                        ui.show_ctx = not ui.show_ctx
+                        state = "on" if ui.show_ctx else "off"
+                        ui.add_block("SYS: ", f"Retrieval context {state}")
+                        ui.status = "Idle"
+                        flush()
+                        continue
+                    if line == "/3":
+                        tutorial_prompt = presets.get("tutorial", "Explain this system.")
+                        do_stream(
+                            ui,
+                            llm,
+                            fd,
+                            system_prompt,
+                            tutorial_prompt,
+                            "Give me a complete tutorial of ADDS AI.",
+                            kb,
+                            web_search=False,
+                        )
+                        continue
+                    if line == "/4":
+                        models = ", ".join(ui.available_models)
+                        ui.add_block("SYS: ", f"Models: {models}. Set with /model <id>.")
+                        ui.input_buf = "/model "
+                        flush()
+                        continue
+
                 if cmd[0] in ("/q", "/quit"):
                     return
                 if cmd[0] == "/clear":
@@ -488,6 +552,7 @@ def main():
                     ui.lines.clear()
                     ui.add_block("SYS: ", "New conversation started.")
                     ui.personalization_sent = False
+                    ui.add_shortcut_grid()
                 elif cmd[0] == "/preset":
                     if len(cmd) == 1:
                         names = ", ".join(presets.keys()) if presets else "(none)"
