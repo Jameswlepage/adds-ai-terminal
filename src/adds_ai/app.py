@@ -104,7 +104,7 @@ class UI:
     def clear_history(self) -> None:
         self.history.clear()
 
-    def add_shortcut_grid(self) -> None:
+    def add_shortcut_grid(self, center: bool = True) -> None:
         """Render a 2x2 grid of shortcut suggestions into the transcript."""
         width = min(self.cols, 78)
         cell_w = max(18, (width - 3) // 2)
@@ -123,10 +123,16 @@ class UI:
             row("How to use AMBER AI", "List or set available models"),
             top,
         ]
-        self.lines.extend(rows)
         footer = "At your fingers rests the world's knowledge. What will you create?"
-        self.lines.append(footer[: self.cols])
-        self.lines.append("")
+        grid_lines = rows + [footer[: self.cols], ""]
+
+        if center:
+            height = self.viewport_height()
+            remaining = height - len(self.lines) - len(grid_lines)
+            pad = max(0, remaining // 2)
+            self.lines.extend([""] * pad)
+
+        self.lines.extend(grid_lines)
 
     def viewport_height(self) -> int:
         """Visible rows for the transcript area."""
