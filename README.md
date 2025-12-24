@@ -34,127 +34,41 @@ This project is a reference implementation for building **LLM-powered, text-mode
 
 The terminal is the display. The Pi is the host.
 
-## Dev modes
+## How it runs
 
-### Mode A: Local faithful simulation (no Pi, no terminal)
-Uses a PTY pair to simulate a serial link end-to-end.
+- **Local simulation (macOS)**: PTY pair + `screen` to mimic serial behavior.
+- **Real hardware (Pi + terminal)**: Same app targeting `/dev/ttyUSB0`; Pi talks RS-232 to the ADDS.
 
-```
+## Quick start
 
-adds-ai (writes to PTY A) <—pty—> screen (reads PTY B)
-
-```
-
-This catches the real problems early:
-- CR/LF behavior
-- redraw flicker and pacing
-- 80×24 wrapping
-- raw TTY input behavior
-
-### Mode B: Deploy to Pi + real terminal
-Exact same app, just run against `/dev/ttyUSB0`.
-
-## Repository layout (recommended)
-
-```
-
-adds-ai-terminal/
-README.md
-LICENSE
-pyproject.toml
-src/adds_ai/
-app.py          # UI + main loop
-ttyio.py        # raw TTY open/read/write
-ansi.py         # ANSI helpers
-llm_openai.py   # Responses API client
-prompts.py      # system prompt + presets
-retrieval.py    # keyword retrieval (local KB)
-config.py       # env/args
-data/
-system_prompt.txt
-presets.yaml
-kb.yaml
-scripts/
-pty_pair.sh
-run_dev.sh
-deploy_pi.sh
-systemd/
-adds-ai.service
-
-````
-
-## Configuration
-
-### Environment variables
-- `OPENAI_API_KEY` (required)
-- `OPENAI_MODEL` (default: `gpt-4o-mini`)
-- `ADDS_COLS` (default: `80`)
-- `ADDS_ROWS` (default: `24`)
-- `ADDS_PRESET` (default preset name, optional)
-
-### Files in `data/`
-- `system_prompt.txt` — global system instruction text
-- `presets.yaml` — named prompt presets (tone/task)
-- `kb.yaml` — local keyword knowledge base (blurbs)
-
-## Prompting model
-
-Every request is composed as:
-
-1) `system_prompt` (base behavior)
-2) `preset_prompt` (selected mode, e.g., “concise assistant”, “coding”, “terminal UI”)
-3) `retrieval_context` (keyword matched blurbs)
-4) user message
-
-The app uses OpenAI **Responses API** with streaming output.
-
-## Quickstart (Local Dev)
-
-### Install
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U pip
 pip install -e .
-export OPENAI_API_KEY=...
+export OPENAI_API_KEY=...  # set your key
+./scripts/run_dev.sh       # spins PTY pair + screen + app
 ```
 
-### Run the faithful serial simulation
-
-```bash
-./scripts/run_dev.sh
-```
-
-This starts:
-
-* a PTY pair
-* a `screen` session as the “monitor”
-* the app attached to the other PTY
-
-## Deploy to Pi
-
-1. Copy repo to Pi:
+Deploy to Pi (USB serial on `/dev/ttyUSB0`):
 
 ```bash
 PI_HOST=raspberrypi.local ./scripts/deploy_pi.sh
+ssh -t pi@"$PI_HOST" 'cd /opt/adds-ai && . .venv/bin/activate && \
+  OPENAI_API_KEY=... ADDS_COLS=80 ADDS_ROWS=24 python -m adds_ai.app --tty /dev/ttyUSB0'
 ```
 
-2. Set `/etc/adds-ai.env` on the Pi:
+For appliance mode, add `/etc/adds-ai.env` and enable `systemd/adds-ai.service`. See docs below.
 
-```bash
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-4o-mini
-ADDS_COLS=80
-ADDS_ROWS=24
-```
+## Docs
 
-3. Enable systemd service:
+- Faithful serial dev loop: `docs/serial-dev.md`
+- Pi deployment and systemd: `docs/pi-deploy.md`
+- Terminal notes: `docs/adds-terminal.md`
+- Prompt/preset/retrieval data: `data/` folder (`system_prompt.txt`, `presets.yaml`, `kb.yaml`)
 
-```bash
-sudo cp /opt/adds-ai/systemd/adds-ai.service /etc/systemd/system/adds-ai.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now adds-ai.service
-```
+## License
+
+MIT License.
 
 ## License
 
