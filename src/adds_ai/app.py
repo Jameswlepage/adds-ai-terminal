@@ -65,9 +65,9 @@ class UI:
         self.personalization_sent = False
         self.personalization_note = ""
         self.available_models: List[str] = [
-            "gpt-4o",
             "gpt-5.2-2025-12-11",
             "gpt-5-nano-2025-08-07",
+            "gpt-4o",
         ]
         self.commands = [
             "/help",
