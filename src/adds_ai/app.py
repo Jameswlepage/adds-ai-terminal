@@ -7,7 +7,7 @@ from typing import List
 
 from . import ansi
 from .config import load_config
-from .llm_openai import OpenAIClient
+from .llm_openai import OpenAIClient, StreamResult
 from .prompts import load_presets, load_system_prompt, select_preset
 from .retrieval import find_matches, format_context, load_kb
 from .ttyio import open_tty, read_bytes, write_bytes
@@ -51,6 +51,9 @@ class UI:
         self.status = "Idle"
         self.show_ctx = True
         self.last_matches: List[str] = []
+        self.session_tokens = 0
+        self.session_cost = 0.0
+        self.interrupted = False
 
     def add_block(self, prefix: str, text: str) -> None:
         for ln in wrap(prefix + text, self.cols):
@@ -103,7 +106,9 @@ class UI:
         ctx_note = ""
         if self.last_matches:
             ctx_note = " | ctx:on" if self.show_ctx else " | ctx:off"
-        st = f" {self.status}{ctx_note} "
+        cost_str = f" | ${self.session_cost:.4f}" if self.session_cost > 0 else ""
+        tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
+        st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
         b += st[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
 
@@ -115,6 +120,81 @@ class UI:
 
         b += ansi.show_cursor()
         return bytes(b)
+
+
+def do_stream(ui: UI, llm: OpenAIClient, fd: int, system_prompt: str, preset_text: str, user_msg: str, kb, web_search: bool = False) -> None:
+    """Handle streaming a response with ESC interrupt, citations, and token tracking."""
+    from .ttyio import read_bytes, write_bytes
+
+    def flush() -> None:
+        write_bytes(fd, ui.render())
+
+    ui.status = "Thinking…"
+    flush()
+
+    out: List[str] = []
+    start = time.time()
+    matches = find_matches(kb, user_msg)
+    ui.last_matches = [m[0] for m in matches]
+    retrieval_context = format_context(matches) if ui.show_ctx else ""
+
+    system_block_parts = [system_prompt, preset_text]
+    if retrieval_context:
+        system_block_parts.append(retrieval_context)
+    system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
+
+    payload = [
+        {"role": "system", "content": system_block},
+        {"role": "user", "content": user_msg},
+    ]
+
+    stream = llm.stream(model=ui.model, input_payload=payload, web_search=web_search)
+
+    ai_block_start = len(ui.lines)
+    last_render = time.time()
+    ui.interrupted = False
+    final_result: StreamResult | None = None
+
+    for event in stream:
+        # Check for ESC key (non-blocking)
+        r, _, _ = select.select([fd], [], [], 0)
+        if r:
+            ch = read_bytes(fd, 1)
+            if ch and ch[0] == 27:  # ESC
+                ui.interrupted = True
+                out.append(" [interrupted]")
+                break
+
+        if isinstance(event, str):
+            out.append(event)
+            if time.time() - last_render > ui.refresh_ms / 1000.0:
+                del ui.lines[ai_block_start:]
+                ui.add_block("AI: ", "".join(out))
+                ui.status = "Streaming… (ESC to stop)"
+                flush()
+                last_render = time.time()
+        elif isinstance(event, StreamResult):
+            final_result = event
+
+    # Final render
+    elapsed_ms = int((time.time() - start) * 1000)
+    del ui.lines[ai_block_start:]
+    ui.add_block("AI: ", "".join(out).strip())
+
+    # Show citations if any
+    if final_result and final_result.citations:
+        ui.add_block("SRC: ", " | ".join(final_result.citations[:3]))  # Limit to 3
+
+    # Update session stats
+    if final_result:
+        ui.session_tokens = llm.session_tokens
+        ui.session_cost = llm.session_cost
+
+    status_parts = ["Idle", f"{elapsed_ms}ms"]
+    if ui.interrupted:
+        status_parts.insert(1, "stopped")
+    ui.status = " | ".join(status_parts)
+    flush()
 
 
 def parse_args():
@@ -182,7 +262,7 @@ def main():
                     ui.lines.clear()
                     ui.add_block("SYS: ", "Cleared.")
                 elif cmd[0] == "/help":
-                    ui.add_block("SYS: ", "Commands: /help /clear /quit /preset [name] /ctx")
+                    ui.add_block("SYS: ", "Commands: /help /clear /quit /preset [name] /ctx /tutorial /search [query] | ESC to stop")
                 elif cmd[0] == "/preset":
                     if len(cmd) == 1:
                         names = ", ".join(presets.keys()) if presets else "(none)"
@@ -199,6 +279,26 @@ def main():
                     ui.show_ctx = not ui.show_ctx
                     state = "on" if ui.show_ctx else "off"
                     ui.add_block("SYS: ", f"Retrieval context {state}")
+                elif cmd[0] == "/tutorial":
+                    # Use the tutorial preset for this message
+                    tutorial_prompt = presets.get("tutorial", "Explain this system.")
+                    do_stream(
+                        ui, llm, fd, system_prompt, tutorial_prompt,
+                        "Give me a complete tutorial of ADDS AI.",
+                        kb, web_search=False
+                    )
+                    continue
+                elif cmd[0] == "/search":
+                    query = " ".join(cmd[1:]) if len(cmd) > 1 else ""
+                    if not query:
+                        ui.add_block("SYS: ", "Usage: /search <query>")
+                    else:
+                        ui.add_block("YOU: ", f"[search] {query}")
+                        do_stream(
+                            ui, llm, fd, system_prompt, preset_text,
+                            query, kb, web_search=True
+                        )
+                        continue
                 else:
                     ui.add_block("SYS: ", f"Unknown: {cmd[0]}")
                 ui.status = "Idle"
@@ -207,48 +307,7 @@ def main():
 
             # normal chat
             ui.add_block("YOU: ", line)
-            ui.status = "Thinking…"
-            flush()
-
-            out: List[str] = []
-            start = time.time()
-            matches = find_matches(kb, line)
-            ui.last_matches = [m[0] for m in matches]
-            retrieval_context = format_context(matches) if ui.show_ctx else ""
-
-            system_block_parts = [system_prompt, preset_text]
-            if retrieval_context:
-                system_block_parts.append(retrieval_context)
-            system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
-
-            payload = [
-                {"role": "system", "content": system_block},
-                {"role": "user", "content": line},
-            ]
-
-            stream = llm.stream(model=ui.model, input_payload=payload)
-
-            last = time.time()
-            for event in stream:
-                out.append(event)
-                if time.time() - last > ui.refresh_ms / 1000.0:
-                    while ui.lines and ui.lines[-1] != "":
-                        ui.lines.pop()
-                    if ui.lines and ui.lines[-1] == "":
-                        ui.lines.pop()
-                    ui.add_block("AI: ", "".join(out))
-                    ui.status = "Streaming…"
-                    flush()
-                    last = time.time()
-
-            # final
-            ui.status = f"Idle | {int((time.time() - start) * 1000)} ms"
-            while ui.lines and ui.lines[-1] != "":
-                ui.lines.pop()
-            if ui.lines and ui.lines[-1] == "":
-                ui.lines.pop()
-            ui.add_block("AI: ", "".join(out).strip())
-            flush()
+            do_stream(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
             continue
 
         # Backspace / DEL

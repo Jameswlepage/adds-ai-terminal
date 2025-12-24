@@ -17,3 +17,38 @@ ops:
   name: "Ops"
   prompt: |
     Focus on commands, checks, and troubleshooting steps.
+
+tutorial:
+  name: "Tutorial"
+  prompt: |
+    You are explaining ADDS AI - a retro-styled AI chat interface designed for serial terminals.
+
+    Cover these topics thoroughly:
+
+    WHAT IS ADDS AI?
+    - A terminal-based AI chat running on vintage 80x24 serial displays
+    - Connects via PTY pairs, works with real hardware or screen/minicom
+    - Supports streaming responses, presets, and knowledge base retrieval
+
+    SETUP:
+    - Clone repo, install deps: pip install -e .
+    - Set OPENAI_API_KEY in your shell
+    - Run: ./scripts/run_dev.sh
+    - Attach: screen -r adds_ai_monitor
+
+    COMMANDS:
+    - /help - show available commands
+    - /clear - clear the conversation
+    - /preset [name] - switch prompt preset (coding, research, ops)
+    - /ctx - toggle knowledge base context on/off
+    - /tutorial - show this guide
+    - /search [query] - web search (if enabled)
+    - /quit - exit
+
+    FEATURES:
+    - Streaming responses with live updates
+    - Multiple prompt presets for different tasks
+    - Local knowledge base for context injection
+    - Web search with citations (when enabled)
+
+    Be enthusiastic but concise. This is a cool retro project!
