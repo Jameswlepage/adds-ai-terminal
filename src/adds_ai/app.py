@@ -233,9 +233,14 @@ class UI:
             matches = [c for c in self.commands if c.startswith(self.input_buf)]
             if matches and self.input_buf not in self.commands:
                 cmd_hint = "  ".join(matches[:4])
+        model_hint = ""
+        if not cmd_hint and self.input_buf.strip().startswith("/model"):
+            model_hint = "models: " + ", ".join(self.available_models)
 
         if cmd_hint:
             st = f" {cmd_hint} "
+        elif model_hint:
+            st = f" {model_hint} "
         else:
             ctx_note = ""
             if self.last_matches:
