@@ -304,7 +304,7 @@ class UI:
             tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
             st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
             if self.empty_state:
-                st += "  * At your fingers rests the world's knowledge. What will you create?"
+                st += " * At your fingers rests the world's knowledge. What will you create?"
 
         b += st[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
