@@ -234,13 +234,15 @@ class UI:
             matches = [c for c in self.commands if c.startswith(self.input_buf)]
             if matches and self.input_buf not in self.commands:
                 cmd_hint = "  ".join(matches[:4])
-        if self.input_buf.strip().startswith("/model"):
-            raw = self.input_buf.strip()
-            partial = raw[len("/model"):].strip().lower()
-            filtered = [
-                m for m in self.available_models if partial in m.lower()
-            ] if partial else self.available_models
-            model_hint = "models: " + "  ".join(filtered)
+        trimmed = self.input_buf.lstrip()
+        if trimmed.lower().startswith("/model"):
+            partial = trimmed[len("/model"):].strip().lower()
+            filtered = (
+                [m for m in self.available_models if partial in m.lower()]
+                if partial
+                else self.available_models
+            )
+            model_hint = "models: " + ("  ".join(filtered) if filtered else "(none)")
 
         if cmd_hint:
             st = f" {cmd_hint}"
