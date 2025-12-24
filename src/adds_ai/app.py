@@ -294,14 +294,23 @@ def do_stream(
     ui.last_matches = [m[0] for m in matches]
     retrieval_context = format_context(matches) if ui.show_ctx else ""
 
-    if not ui.personalization_sent and ui.personalization_note:
-        user_msg = f"{ui.personalization_note}\n\n{user_msg}"
-
     # Auto-enable web search for news/current queries unless explicitly overridden
     needs_web = web_search
     if not needs_web:
         text_l = user_msg.lower()
-        web_triggers = ["news", "headline", "latest", "current", "today", "this week", "breaking", "update"]
+        web_triggers = [
+            "news",
+            "headline",
+            "latest",
+            "current",
+            "today",
+            "this week",
+            "breaking",
+            "update",
+            "search",
+            "find",
+            "lookup",
+        ]
         if any(t in text_l for t in web_triggers):
             needs_web = True
 

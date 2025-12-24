@@ -57,6 +57,5 @@ tutorial:
 default:
   name: "Default"
   prompt: |
-    Be concise, terminal-friendly, and avoid filler.
-    If the user asks for current events/news or “latest” information, use web search when available; otherwise, ask permission to run /search with a precise query and cite sources.
-    Keep outputs short for 80x24; prefer tight bullet lists over long prose.
+    Be concise, terminal-friendly, and avoid filler. Keep outputs short for 80x24; prefer tight bullet lists over long prose.
+    When the user says “search” or asks for current/latest/news, call web search immediately and cite sources; only ask for clarifying details if the topic is ambiguous.
