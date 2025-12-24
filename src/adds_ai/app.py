@@ -64,6 +64,7 @@ class UI:
         self.scroll_offset = 0
         self.personalization_sent = False
         self.personalization_note = ""
+        self.empty_state = False
         self.available_models: List[str] = [
             "gpt-5.2-2025-12-11",
             "gpt-5-nano-2025-08-07",
@@ -134,6 +135,7 @@ class UI:
             self.lines.extend([""] * pad)
 
         self.lines.extend(grid_lines)
+        self.empty_state = True
 
     def viewport_height(self) -> int:
         """Visible rows for the transcript area."""
@@ -296,6 +298,8 @@ class UI:
             cost_str = f" | ${self.session_cost:.4f}" if self.session_cost > 0 else ""
             tok_str = f" | {self.session_tokens}tok" if self.session_tokens > 0 else ""
             st = f" {self.status}{ctx_note}{tok_str}{cost_str} "
+            if self.empty_state:
+                st += " | * At your fingers rests the world's knowledge. What will you create?"
 
         b += st[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
@@ -626,6 +630,7 @@ def main():
                 continue
 
             # normal chat
+            ui.empty_state = False
             ui.add_block(ui.user_prefix(), line)
             do_stream(
                 ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False
