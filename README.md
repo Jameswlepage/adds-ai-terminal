@@ -2,6 +2,8 @@
 
 This project turns a vintage RS-232 text terminal (e.g., ADDS 4000/260) into a modern AI chat console.
 
+![Terminal Example (hotlink)](https://i.ebayimg.com/images/g/R3MAAOSwi0lg03aS/s-l1600.webp)
+
 It is built to be:
 - **Faithful to real serial terminals**: the app renders to a TTY device (PTY in dev; `/dev/ttyUSB0` on the Pi).
 - **Deployable as an appliance**: runs on a Raspberry Pi, outputs directly to the terminal over RS-232.
