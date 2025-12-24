@@ -142,6 +142,16 @@ class UI:
         self.lines.extend(grid_lines)
         self.empty_state = True
 
+    def clear_empty_state(self) -> None:
+        """Remove the empty-state grid while keeping the initial SYS notice."""
+        if not self.empty_state:
+            return
+        preserved = [ln for ln in self.lines if ln.startswith("SYS: ")]
+        if preserved and preserved[-1] != "":
+            preserved.append("")
+        self.lines = preserved or []
+        self.empty_state = False
+
     def viewport_height(self) -> int:
         """Visible rows for the transcript area."""
         if self.no_ansi:
@@ -519,6 +529,7 @@ def main():
 
             # commands
             if line.startswith("/"):
+                ui.clear_empty_state()
                 cmd = line.split()
 
                 # Shortcut grid commands
@@ -560,6 +571,7 @@ def main():
                 if cmd[0] == "/clear":
                     ui.lines.clear()
                     ui.add_block("SYS: ", "Cleared.")
+                    ui.empty_state = False
                 elif cmd[0] == "/help":
                     ui.add_block(
                         "SYS: ",
@@ -635,6 +647,7 @@ def main():
                 continue
 
             # normal chat
+            ui.clear_empty_state()
             ui.empty_state = False
             ui.add_block(ui.user_prefix(), line)
             do_stream(
