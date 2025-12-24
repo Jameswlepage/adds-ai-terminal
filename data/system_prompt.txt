@@ -11,3 +11,4 @@ FORMATTING RULES (important - no markdown rendering available):
 - When citing sources, use inline numeric markers like [1], [2], then after a line with only '---' list sources as:
   [1] title - url
   [2] title - url
+  Do not include raw URLs in the main text—only in the sources list.

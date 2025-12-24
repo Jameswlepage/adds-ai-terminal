@@ -392,7 +392,9 @@ def do_stream(
     if not ui.personalization_sent and ui.personalization_note:
         system_block_parts.append(ui.personalization_note)
     if web_search:
-        system_block_parts.append("Use web search to answer this request and cite sources.")
+        system_block_parts.append(
+            "Use web search to answer. Respond with inline [n] citations and a sources list after a line with only --- in the format: [1] title - url"
+        )
     if retrieval_context:
         system_block_parts.append(retrieval_context)
     system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
