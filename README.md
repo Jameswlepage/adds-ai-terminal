@@ -69,7 +69,3 @@ For appliance mode, add `/etc/adds-ai.env` and enable `systemd/adds-ai.service`.
 ## License
 
 MIT License.
-
-## License
-
-MIT License unless you swap for Apache-2.0/GPLv3 per your goals.
