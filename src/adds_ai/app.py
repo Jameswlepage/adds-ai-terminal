@@ -207,7 +207,8 @@ class UI:
         # header
         b += ansi.rev(True)
         b += ansi.move(1, 1)
-        hdr = f" AMBER AI Chat | model: {self.model} | preset: {self.preset} | /help /clear /quit "
+        preset_str = f" | preset: {self.preset}" if self.preset else ""
+        hdr = f" AMBER AI Chat | model: {self.model}{preset_str} | /help /clear /quit "
         b += hdr[: self.cols].ljust(self.cols).encode()
         b += ansi.reset()
 
