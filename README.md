@@ -1,47 +1,26 @@
-# ADDS AI Terminal (Serial TTY Chat Appliance)
+# AMBER AI Terminal
 
-This project turns a vintage RS-232 text terminal (e.g., ADDS 4000/260) into a modern AI chat console.
+A vintage RS-232 text terminal (ADDS 4000/260, VT100, etc.) turned into an AI chat appliance.
 
 ![EIS / ADDS Terminal with OpenAI chat, in text mode](https://github.com/user-attachments/assets/6cc517c0-9d33-4145-b47f-29afd25fd0ba)
-(Terminal running in text only mode)
 
+Built for real serial terminals: renders to a TTY device (PTY in dev; `/dev/ttyUSB0` on a Pi), handles serial latency and flow control, and respects strict 80x24 constraints.
 
-It is built to be:
-- **Faithful to real serial terminals**: the app renders to a TTY device (PTY in dev; `/dev/ttyUSB0` on the Pi).
-- **Deployable as an appliance**: runs on a Raspberry Pi, outputs directly to the terminal over RS-232.
-- **Open-source friendly**: minimal dependencies, deterministic UI, and clean separation of UI vs. LLM backend.
+## Features
 
-## What this is actually for
+- **Multiple display modes**: Full-screen ANSI, plain output, or line-oriented text mode
+- **Streaming responses** with ESC to interrupt mid-generation
+- **Web search** with inline citations (`[1]`, `[2]`) and auto-trigger on keywords like "news", "latest", "current"
+- **Prompt presets**: Switch personas quickly (coding, research, ops, tutorial)
+- **Knowledge base retrieval**: Keyword-matched context injection
+- **Session tracking**: Token count and cost displayed in status bar
+- **Transcript scrolling** with arrow keys
 
-Most “AI chat” UIs assume a modern terminal emulator with full Unicode and fast redraw. Vintage terminals are different:
-- limited character sets
-- limited ANSI features
-- serial latency and flow control
-- strict 80×24 ergonomics
+## Hardware
 
-This project is a reference implementation for building **LLM-powered, text-mode applications** that run on real serial terminals.
-
-## Key features
-
-- **ANSI/VT-style full-screen UI** designed for 80×24 terminals
-- **System prompt** support (global behavior and safety rules)
-- **Prompt presets** (switch personas/tasks quickly)
-- **Basic keyword retrieval** (local blurbs injected into the prompt)
-  - Example: query includes “James LePage” → inject stored blurb about James
-- **OpenAI Responses API** streaming (fast, modern API surface)
-
-## Hardware target
-
-- Raspberry Pi host (any Pi that can run Linux + Python)
-- RS-232 link to the terminal (USB-serial FTDI strongly preferred)
-- Terminal: ADDS 4000/260 or similar RS-232 “green screen” terminal
-
-The terminal is the display. The Pi is the host.
-
-## How it runs
-
-- **Local simulation (macOS)**: PTY pair + `screen` to mimic serial behavior.
-- **Real hardware (Pi + terminal)**: Same app targeting `/dev/ttyUSB0`; Pi talks RS-232 to the ADDS.
+- Raspberry Pi (any model running Linux + Python)
+- USB-serial adapter (FTDI preferred) with RS-232 to the terminal
+- Terminal: ADDS 4000/260, VT100, or similar
 
 ## Quick start
 
@@ -49,27 +28,54 @@ The terminal is the display. The Pi is the host.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-export OPENAI_API_KEY=...  # set your key
-./scripts/run_dev.sh       # spins PTY pair + screen + app
+export OPENAI_API_KEY=...
+./scripts/run_dev.sh       # PTY pair + screen + app
 ```
 
-Deploy to Pi (USB serial on `/dev/ttyUSB0`):
+Deploy to Pi:
 
 ```bash
 PI_HOST=raspberrypi.local ./scripts/deploy_pi.sh
 ssh -t pi@"$PI_HOST" 'cd /opt/adds-ai && . .venv/bin/activate && \
-  OPENAI_API_KEY=... ADDS_COLS=80 ADDS_ROWS=24 python -m adds_ai.app --tty /dev/ttyUSB0'
+  OPENAI_API_KEY=... python -m adds_ai.app --tty /dev/ttyUSB0'
 ```
 
-For appliance mode, add `/etc/adds-ai.env` and enable `systemd/adds-ai.service`. See docs below.
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show commands |
+| `/new` | Clear conversation |
+| `/clear` | Clear screen |
+| `/preset [name]` | Switch preset |
+| `/model [name]` | Change model |
+| `/search [query]` | Web search |
+| `/ctx` | Toggle knowledge base |
+| `/quit` | Exit |
+
+**Shortcuts**: `/1` search, `/2` toggle ctx, `/3` tutorial, `/4` models
+
+**Keys**: ESC interrupts response, Up/Down scrolls, Ctrl+U clears input
+
+## Configuration
+
+```
+--tty PATH       TTY device (e.g. /dev/ttyUSB0)
+--text-mode      Line-oriented output (no cursor addressing)
+--no-ansi        Disable ANSI sequences
+--preset NAME    Default preset
+--model NAME     LLM model
+```
+
+Environment: `OPENAI_API_KEY`, `OPENAI_MODEL`, `ADDS_COLS`, `ADDS_ROWS`, `ADDS_TEXT_MODE`, `ADDS_NO_ANSI`
 
 ## Docs
 
-- Faithful serial dev loop: `docs/serial-dev.md`
-- Pi deployment and systemd: `docs/pi-deploy.md`
-- Terminal notes: `docs/adds-terminal.md`
-- Prompt/preset/retrieval data: `data/` folder (`system_prompt.txt`, `presets.yaml`, `kb.yaml`)
+- `docs/serial-dev.md` - Local dev with PTY pairs
+- `docs/pi-deploy.md` - Pi deployment and systemd
+- `docs/adds-terminal.md` - Terminal notes
+- `data/` - System prompt, presets, knowledge base
 
 ## License
 
-MIT License.
+MIT
