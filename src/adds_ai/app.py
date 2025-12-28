@@ -40,12 +40,14 @@ class UI:
         preset: str,
         refresh_ms: int,
         no_ansi: bool,
+        text_mode: bool = False,
     ):
         self.cols, self.rows = cols, rows
         self.model = model
         self.preset = preset
         self.refresh_ms = refresh_ms
         self.no_ansi = no_ansi
+        self.text_mode = text_mode  # Line-oriented mode: no cursor, natural scroll
         self.lines: List[str] = []
         self.mode = "splash"  # splash | chat
         self.splash_input = ""
@@ -181,6 +183,35 @@ class UI:
         buf.append(f"[{self.status}]")
         buf.append("> " + self.input_buf)
         return ("\n".join(buf) + "\n").encode(errors="ignore")
+
+    def render_text_line(self, text: str) -> bytes:
+        """Render a single line for text mode (line-oriented, natural scroll)."""
+        # Wrap to column width and output with \r\n
+        lines = wrap(text, self.cols) or [""]
+        return ("\r\n".join(lines) + "\r\n").encode(errors="ignore")
+
+    def render_text_clear(self) -> bytes:
+        """Clear screen in text mode by scrolling content off."""
+        # Print enough blank lines to push ALL content off screen
+        return b"\r\n" * 50
+
+    def render_text_banner(self) -> bytes:
+        """Render startup banner for text mode."""
+        banner = [
+            "",
+            "=" * self.cols,
+            "AMBER AI Terminal".center(self.cols),
+            f"Model: {self.model}".center(self.cols),
+            "=" * self.cols,
+            "",
+            "Commands: /help /new /clear /quit /search <query>",
+            "",
+        ]
+        return ("\r\n".join(banner) + "\r\n").encode(errors="ignore")
+
+    def render_text_prompt(self) -> bytes:
+        """Render input prompt for text mode."""
+        return f"> {self.input_buf}".encode(errors="ignore")
 
     def render_splash(self) -> bytes:
         art = [
@@ -343,6 +374,90 @@ class UI:
         self.splash_input = ""
 
 
+def do_stream_text(
+    ui: UI,
+    llm: OpenAIClient,
+    fd: int,
+    system_prompt: str,
+    preset_text: str,
+    user_msg: str,
+    kb,
+    web_search: bool = False,
+) -> None:
+    """Text mode streaming - line-oriented, no cursor addressing."""
+    from .ttyio import read_bytes, write_bytes
+
+    matches = find_matches(kb, user_msg)
+    ui.last_matches = [m[0] for m in matches]
+    retrieval_context = format_context(matches) if ui.show_ctx else ""
+
+    # Auto-enable web search for news/current queries
+    needs_web = web_search
+    if not needs_web:
+        text_l = user_msg.lower()
+        web_triggers = ["news", "headline", "latest", "current", "today", "search"]
+        if any(t in text_l for t in web_triggers):
+            needs_web = True
+
+    system_block_parts = [system_prompt, preset_text]
+    if not ui.personalization_sent and ui.personalization_note:
+        system_block_parts.append(ui.personalization_note)
+    if web_search:
+        system_block_parts.append(
+            "Use web search. Give a brief 1-2 sentence answer. ASCII only, no special characters, no citations, no sources list."
+        )
+    if retrieval_context:
+        system_block_parts.append(retrieval_context)
+    system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
+
+    payload = [{"role": "system", "content": system_block}]
+    payload.extend(ui.history)
+    payload.append({"role": "user", "content": user_msg})
+    ui.add_to_history("user", user_msg)
+
+    stream = llm.stream(model=ui.model, input_payload=payload, web_search=needs_web)
+
+    # Stream directly to terminal, character by character
+    col = 0
+    last_was_newline = False
+    out: List[str] = []
+    final_result: StreamResult | None = None
+
+    for event in stream:
+        # Check for ESC (interrupt)
+        r, _, _ = select.select([fd], [], [], 0)
+        if r:
+            ch = read_bytes(fd, 1)
+            if ch and ch[0] == 27:
+                write_bytes(fd, b" [stopped]\r\n")
+                ui.interrupted = True
+                break
+
+        if isinstance(event, str):
+            out.append(event)
+            # Output ASCII only, newlines become spaces, let terminal wrap
+            for char in event:
+                if char == '\n':
+                    write_bytes(fd, b" ")
+                elif 32 <= ord(char) <= 126:
+                    write_bytes(fd, char.encode())
+        elif isinstance(event, StreamResult):
+            final_result = event
+
+    # End the response with blank line before next prompt
+    write_bytes(fd, b"\r\n\r\n")
+
+    response_text = "".join(out).strip()
+    ui.add_to_history("assistant", response_text)
+
+    if final_result:
+        ui.session_tokens = llm.session_tokens
+        ui.session_cost = llm.session_cost
+
+    if not ui.personalization_sent and ui.personalization_note:
+        ui.personalization_sent = True
+
+
 def do_stream(
     ui: UI,
     llm: OpenAIClient,
@@ -475,18 +590,203 @@ def parse_args():
     ap.add_argument("--model", default=env.model)
     ap.add_argument("--refresh-ms", type=int, default=env.refresh_ms)
     ap.add_argument("--no-ansi", action="store_true", default=env.no_ansi)
+    ap.add_argument(
+        "--text-mode",
+        action="store_true",
+        default=env.text_mode,
+        help="Line-oriented text mode for native terminals (no cursor addressing)",
+    )
     ap.add_argument("--preset", default=env.preset, help="Prompt preset name")
     return ap.parse_args(), env
+
+
+def text_mode_main(args, presets, preset_name, preset_text, system_prompt, kb):
+    """Text mode main loop - line-oriented, no cursor addressing."""
+    import os as _os
+
+    fd = open_tty(args.tty)
+    ui = UI(
+        cols=args.cols,
+        rows=args.rows,
+        model=args.model,
+        preset=preset_name,
+        refresh_ms=args.refresh_ms,
+        no_ansi=True,
+        text_mode=True,
+    )
+    ui.mode = "chat"  # Skip splash in text mode
+    ui.user_label = "USER"
+    ui.user_name = "User"
+
+    llm = OpenAIClient()
+
+    # Set up FIFO for SSH input (in addition to serial input)
+    # Use O_RDWR to keep FIFO open even when writers disconnect
+    fifo_path = "/tmp/adds-ai-input"
+    try:
+        _os.unlink(fifo_path)
+    except FileNotFoundError:
+        pass
+    _os.mkfifo(fifo_path)
+    fifo_fd = _os.open(fifo_path, _os.O_RDWR | _os.O_NONBLOCK)
+
+    # Clear screen and print banner
+    write_bytes(fd, ui.render_text_clear())
+    write_bytes(fd, ui.render_text_banner())
+    write_bytes(fd, b"> ")
+
+    input_buf = ""
+    input_fds = [fd, fifo_fd]  # Listen on both serial and FIFO
+
+    while True:
+        r, _, _ = select.select(input_fds, [], [], 0.1)
+        if not r:
+            continue
+
+        # Check FIFO first (SSH input) - read full lines
+        if fifo_fd in r:
+            try:
+                data = _os.read(fifo_fd, 1024)
+                if data:
+                    # Process each line from FIFO
+                    lines = data.decode(errors="ignore").split("\n")
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("/"):
+                            cmd = line.split()
+                            if cmd[0] in ("/q", "/quit"):
+                                write_bytes(fd, b"Goodbye.\r\n")
+                                _os.close(fifo_fd)
+                                _os.unlink(fifo_path)
+                                return
+                            elif cmd[0] == "/clear":
+                                write_bytes(fd, ui.render_text_clear())
+                            elif cmd[0] == "/new":
+                                ui.clear_history()
+                                write_bytes(fd, b"New conversation started.\r\n")
+                            elif cmd[0] == "/help":
+                                write_bytes(fd, b"Commands: /help /new /clear /quit /model /search\r\n")
+                            elif cmd[0] == "/model":
+                                if len(cmd) == 1:
+                                    write_bytes(fd, f"Model: {ui.model}\r\n".encode())
+                                else:
+                                    ui.model = " ".join(cmd[1:])
+                                    write_bytes(fd, f"Model set: {ui.model}\r\n".encode())
+                            elif cmd[0] == "/search":
+                                query = " ".join(cmd[1:]) if len(cmd) > 1 else ""
+                                if query:
+                                    write_bytes(fd, f"[search] {query}\r\n".encode())
+                                    do_stream_text(ui, llm, fd, system_prompt, preset_text, query, kb, web_search=True)
+                            else:
+                                write_bytes(fd, f"Unknown: {cmd[0]}\r\n".encode())
+                        else:
+                            # Echo user input for regular messages
+                            write_bytes(fd, f"{line}\r\n".encode())
+                            do_stream_text(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
+                        write_bytes(fd, b"> ")
+            except BlockingIOError:
+                pass
+            continue
+
+        # Serial port input (if keyboard connected)
+        if fd not in r:
+            continue
+
+        ch = read_bytes(fd, 1)
+        if not ch:
+            continue
+
+        c = ch[0]
+
+        # Enter - process input
+        if c in (10, 13):
+            write_bytes(fd, b"\r\n")
+            line = input_buf.strip()
+            input_buf = ""
+
+            if not line:
+                write_bytes(fd, b"> ")
+                continue
+
+            # Commands
+            if line.startswith("/"):
+                cmd = line.split()
+                if cmd[0] in ("/q", "/quit"):
+                    write_bytes(fd, b"Goodbye.\r\n")
+                    return
+                elif cmd[0] == "/clear":
+                    write_bytes(fd, ui.render_text_clear())
+                    write_bytes(fd, ui.render_text_banner())
+                elif cmd[0] == "/new":
+                    ui.clear_history()
+                    write_bytes(fd, b"New conversation started.\r\n")
+                elif cmd[0] == "/help":
+                    help_text = "Commands: /help /new /clear /quit /model [name] /search [query]\r\n"
+                    write_bytes(fd, help_text.encode())
+                elif cmd[0] == "/model":
+                    if len(cmd) == 1:
+                        write_bytes(fd, f"Current model: {ui.model}\r\n".encode())
+                    else:
+                        ui.model = " ".join(cmd[1:])
+                        write_bytes(fd, f"Model set to: {ui.model}\r\n".encode())
+                elif cmd[0] == "/search":
+                    query = " ".join(cmd[1:]) if len(cmd) > 1 else ""
+                    if not query:
+                        write_bytes(fd, b"Usage: /search <query>\r\n")
+                    else:
+                        write_bytes(fd, f"USER: [search] {query}\r\n".encode())
+                        do_stream_text(ui, llm, fd, system_prompt, preset_text, query, kb, web_search=True)
+                else:
+                    write_bytes(fd, f"Unknown command: {cmd[0]}\r\n".encode())
+                write_bytes(fd, b"> ")
+                continue
+
+            # Normal chat
+            write_bytes(fd, f"USER: {line}\r\n".encode())
+            do_stream_text(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
+            write_bytes(fd, b"> ")
+            continue
+
+        # Backspace
+        if c in (8, 127):
+            if input_buf:
+                input_buf = input_buf[:-1]
+                write_bytes(fd, b"\b \b")  # Erase character
+            continue
+
+        # Ctrl+U - clear line
+        if c == 21:
+            while input_buf:
+                write_bytes(fd, b"\b \b")
+                input_buf = input_buf[:-1]
+            continue
+
+        # Ignore other control chars
+        if c < 32:
+            continue
+
+        # Printable ASCII
+        if 32 <= c <= 126:
+            input_buf += chr(c)
+            write_bytes(fd, bytes([c]))  # Echo character
 
 
 def main():
     args, env = parse_args()
 
-    fd = open_tty(args.tty)
     presets = load_presets()
     preset_name, preset_text = select_preset(presets, args.preset)
     system_prompt = load_system_prompt()
     kb = load_kb()
+
+    # Text mode - use simplified line-oriented interface
+    if args.text_mode:
+        text_mode_main(args, presets, preset_name, preset_text, system_prompt, kb)
+        return
+
+    fd = open_tty(args.tty)
     ui = UI(
         cols=args.cols,
         rows=args.rows,
