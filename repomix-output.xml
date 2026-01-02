@@ -1,3 +1,803 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.claude/
+  settings.local.json
+data/
+  kb.yaml
+  presets.yaml
+  system_prompt.txt
+docs/
+  adds-terminal.md
+  pi-deploy.md
+  serial-dev.md
+scripts/
+  deploy_pi.sh
+  pty_pair.sh
+  run_dev.sh
+src/
+  adds_ai/
+    __init__.py
+    ansi.py
+    app.py
+    config.py
+    llm_openai.py
+    prompts.py
+    retrieval.py
+    ttyio.py
+systemd/
+  adds-ai.service
+.gitignore
+LICENSE
+pyproject.toml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".claude/settings.local.json">
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c:*)",
+      "Bash(git pull:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
+</file>
+
+<file path="data/kb.yaml">
+"James LePage":
+  blurb: |
+    James LePage is Head of AI at Automattic. If asked about James, summarize relevant
+    work at a high level and keep responses concise.
+
+"ADDS 4000/260":
+  blurb: |
+    ADDS 4000/260 is a vintage text terminal. Assume 80x24, ANSI-ish controls, and
+    RS-232 serial connectivity.
+</file>
+
+<file path="docs/adds-terminal.md">
+# ADDS 4000/260 notes
+
+- Set terminal for ANSI/VT100 emulation, 80×24, 9600 baud, 8N1.
+- Use USB→DB25 FTDI null-modem cable on the Pi; it appears as `/dev/ttyUSB0`.
+- Disable local echo on the terminal; the app renders the cursor and prompt.
+- If output smears or flickers, throttle redraws (`ADDS_REFRESH_MS`, `--refresh-ms`) and avoid excessive screen clears.
+- If streaming pauses, try toggling hardware flow control (RTS/CTS) or lower baud to test stability.
+</file>
+
+<file path="docs/pi-deploy.md">
+# Raspberry Pi deployment
+
+Runs the same app binary against `/dev/ttyUSB0` to drive the ADDS terminal.
+
+## Prep the Pi (once)
+
+```bash
+sudo apt update
+sudo apt -y install python3-pip python3-venv
+sudo mkdir -p /opt/adds-ai
+sudo chown -R pi:pi /opt/adds-ai
+```
+
+## Push code from macOS
+
+```bash
+PI_HOST=raspberrypi.local ./scripts/deploy_pi.sh
+```
+
+`deploy_pi.sh` rsyncs the repo, creates a venv, and installs `openai`.
+
+## Run interactively
+
+```bash
+ssh -t pi@raspberrypi.local '
+  cd /opt/adds-ai
+  . .venv/bin/activate
+  export OPENAI_API_KEY=...
+  ADDS_COLS=80 ADDS_ROWS=24 python -m adds_ai.app --tty /dev/ttyUSB0
+'
+```
+
+Confirm the FTDI cable shows up as `/dev/ttyUSB0` (`ls /dev/ttyUSB*`). Set the ADDS to 9600 8N1, ANSI/VT100 mode, 80×24. You should see the same UI as `screen` locally.
+
+## Appliance mode (systemd)
+
+1. Store env in `/etc/adds-ai.env`:
+   ```bash
+   sudo tee /etc/adds-ai.env >/dev/null <<'EOF'
+   OPENAI_API_KEY=YOUR_KEY
+   OPENAI_MODEL=gpt-4o-mini
+   ADDS_COLS=80
+   ADDS_ROWS=24
+   EOF
+   sudo chmod 600 /etc/adds-ai.env
+   ```
+2. Install the unit:
+   ```bash
+   sudo cp /opt/adds-ai/systemd/adds-ai.service /etc/systemd/system/adds-ai.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now adds-ai.service
+   ```
+
+On reboot the ADDS should immediately show the chat UI.
+</file>
+
+<file path="docs/serial-dev.md">
+# Serial-first dev (macOS)
+
+Goal: run the app attached to a real TTY device via a PTY pair so you catch CR/LF, redraw, and latency issues.
+
+## Prereqs
+
+- `socat` and `screen` installed (macOS: `brew install socat screen`)
+- Python 3.10+, `openai` lib, `OPENAI_API_KEY` exported
+
+## Spin up PTY pair
+
+```bash
+./scripts/pty_pair.sh
+cat /tmp/adds_ai_ptys.txt
+# line 1: app end
+# line 2: monitor end (open with screen)
+```
+
+## Full dev loop
+
+```bash
+source .venv/bin/activate
+export OPENAI_API_KEY=...
+./scripts/run_dev.sh
+```
+
+`screen` attaches to the monitor end of the PTY; exit with `Ctrl-A` then `k`. The app writes to the other PTY, reading raw bytes—no cooked input from your Terminal.
+
+## Manual run
+
+```bash
+APP_TTY=$(sed -n '1p' /tmp/adds_ai_ptys.txt)
+ADDS_COLS=80 ADDS_ROWS=24 python -m adds_ai.app --tty "$APP_TTY"
+```
+
+## Troubleshooting
+
+- Stair-stepping lines: force CR+LF on any manual prints; the UI mostly uses cursor addressing.
+- Flicker: increase `ADDS_REFRESH_MS` or pass `--refresh-ms 150`.
+- Garbled header: ensure terminal/`screen` window is 80×24; ANSI/VT100 mode on the real terminal.
+- Stuck streaming: some serial adapters want RTS/CTS disabled; toggle flow control.
+</file>
+
+<file path="scripts/deploy_pi.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+PI_HOST="${PI_HOST:-raspberrypi.local}"
+RSYNC_EXCLUDES="--exclude .venv --exclude __pycache__ --exclude .git"
+
+rsync -av $RSYNC_EXCLUDES ./ pi@"$PI_HOST":/opt/adds-ai/
+ssh pi@"$PI_HOST" '
+  set -e
+  cd /opt/adds-ai
+  python3 -m venv .venv
+  . .venv/bin/activate
+  pip install -U pip
+  pip install openai
+'
+echo "Deployed to $PI_HOST:/opt/adds-ai"
+</file>
+
+<file path="src/adds_ai/ansi.py">
+CSI = b"\x1b["
+
+
+def clear() -> bytes:
+    return CSI + b"2J" + CSI + b"H"
+
+
+def move(row: int, col: int) -> bytes:
+    return CSI + f"{row};{col}H".encode()
+
+
+def rev(on: bool) -> bytes:
+    return CSI + (b"7m" if on else b"0m")
+
+
+def hide_cursor() -> bytes:
+    return CSI + b"?25l"
+
+
+def show_cursor() -> bytes:
+    return CSI + b"?25h"
+
+
+def clear_eol() -> bytes:
+    return CSI + b"K"
+
+
+def reset() -> bytes:
+    return CSI + b"0m"
+</file>
+
+<file path="src/adds_ai/prompts.py">
+import os
+from pathlib import Path
+from typing import Dict, Tuple
+
+import yaml
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def load_system_prompt(path: Path | None = None) -> str:
+    p = path or DATA_DIR / "system_prompt.txt"
+    try:
+        return p.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+
+
+def load_presets(path: Path | None = None) -> Dict[str, str]:
+    p = path or DATA_DIR / "presets.yaml"
+    if not p.exists():
+        return {}
+    with p.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    presets: Dict[str, str] = {}
+    for key, val in data.items():
+        if isinstance(val, dict) and "prompt" in val:
+            presets[str(key)] = str(val["prompt"]).strip()
+    return presets
+
+
+def select_preset(presets: Dict[str, str], name: str | None) -> Tuple[str, str]:
+    if not presets:
+        return "", ""
+    chosen = name or os.getenv("ADDS_PRESET") or "default"
+    if chosen not in presets:
+        chosen = "default" if "default" in presets else next(iter(presets))
+    return chosen, presets[chosen]
+</file>
+
+<file path="src/adds_ai/retrieval.py">
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import yaml
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+MAX_MATCHES = 3
+MAX_CHARS = 800
+
+
+def load_kb(path: Path | None = None) -> Dict[str, str]:
+    p = path or DATA_DIR / "kb.yaml"
+    if not p.exists():
+        return {}
+    with p.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    kb: Dict[str, str] = {}
+    for key, val in raw.items():
+        if isinstance(val, dict) and "blurb" in val:
+            kb[str(key)] = str(val["blurb"]).strip()
+    return kb
+
+
+def find_matches(kb: Dict[str, str], text: str) -> List[Tuple[str, str]]:
+    if not kb or not text:
+        return []
+    lowered = text.lower()
+    matches = []
+    for key, blurb in kb.items():
+        if key.lower() in lowered:
+            matches.append((key, blurb))
+    # deterministic: longest keyword first, then alpha
+    matches.sort(key=lambda kv: (-len(kv[0]), kv[0].lower()))
+    return matches[:MAX_MATCHES]
+
+
+def format_context(matches: List[Tuple[str, str]]) -> str:
+    if not matches:
+        return ""
+    lines = ["[Retrieved context]"]
+    total = 0
+    for key, blurb in matches:
+        entry = f"- {key}: {blurb}"
+        total += len(entry)
+        if total > MAX_CHARS:
+            break
+        lines.append(entry)
+    return "\n".join(lines)
+</file>
+
+<file path="src/adds_ai/ttyio.py">
+import os
+import termios
+import tty
+
+
+def open_tty(path: str) -> int:
+    """Open a TTY in raw mode without becoming controlling terminal."""
+    fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
+    tty.setraw(fd, when=termios.TCSANOW)
+    return fd
+
+
+def write_bytes(fd: int, data: bytes) -> None:
+    os.write(fd, data)
+
+
+def read_bytes(fd: int, n: int = 1) -> bytes:
+    return os.read(fd, n)
+</file>
+
+<file path="systemd/adds-ai.service">
+[Unit]
+Description=ADDS AI Chat (serial console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/adds-ai.env
+WorkingDirectory=/opt/adds-ai
+ExecStart=/opt/adds-ai/.venv/bin/python -m adds_ai.app --tty /dev/ttyUSB0
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+</file>
+
+<file path="LICENSE">
+MIT License
+
+Copyright (c) 2024 James LePage
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</file>
+
+<file path="scripts/pty_pair.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Creates a connected PTY pair and prints their device paths.
+# One end is for the app, the other end is for "screen" (your simulated monitor).
+
+PTYS_FILE="/tmp/adds_ai_ptys.txt"
+PID_FILE="/tmp/adds_ai_socat.pid"
+LOG_FILE="/tmp/adds_ai_socat.log"
+
+# Clean up any stale socat
+if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+  kill "$(cat "$PID_FILE")" || true
+fi
+rm -f "$PID_FILE" "$PTYS_FILE" "$LOG_FILE"
+
+# Start socat in the background
+socat -d -d pty,raw,echo=0,icanon=0 pty,raw,echo=0,icanon=0 2> "$LOG_FILE" &
+SOCAT_PID=$!
+echo "$SOCAT_PID" > "$PID_FILE"
+
+# Wait for PTY lines to appear
+for _ in {1..50}; do
+  if grep -q "PTY is" "$LOG_FILE"; then
+    break
+  fi
+  sleep 0.1
+done
+
+grep "PTY is" "$LOG_FILE" | awk '{print $NF}' > "$PTYS_FILE"
+cat "$PTYS_FILE"
+echo
+echo "PTYs saved to $PTYS_FILE (app end first, monitor end second)."
+echo "socat pid: $SOCAT_PID"
+</file>
+
+<file path="src/adds_ai/__init__.py">
+__all__ = ["app", "ttyio", "ansi", "config", "prompts", "retrieval", "llm_openai"]
+</file>
+
+<file path="src/adds_ai/llm_openai.py">
+from dataclasses import dataclass, field
+from typing import Generator, Iterable, List, Mapping, Optional
+
+from openai import OpenAI
+
+# Pricing per 1M tokens (as of late 2024)
+MODEL_PRICING = {
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+    "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
+}
+
+
+@dataclass
+class StreamResult:
+    text: str = ""
+    citations: List[str] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class OpenAIClient:
+    def __init__(self):
+        self.client = OpenAI()
+        self.session_tokens = 0
+        self.session_cost = 0.0
+
+    def _calculate_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        pricing = MODEL_PRICING.get(model, MODEL_PRICING.get("gpt-4o-mini"))
+        input_cost = (input_tokens / 1_000_000) * pricing["input"]
+        output_cost = (output_tokens / 1_000_000) * pricing["output"]
+        return input_cost + output_cost
+
+    def stream(
+        self,
+        model: str,
+        input_payload: Iterable[Mapping[str, str]],
+        web_search: bool = False,
+    ) -> Generator[str | StreamResult, None, None]:
+        tools = [{"type": "web_search_preview"}] if web_search else []
+
+        stream = self.client.responses.create(
+            model=model,
+            input=list(input_payload),
+            tools=tools if tools else None,
+            stream=True,
+        )
+
+        result = StreamResult()
+        citations = []
+
+        for event in stream:
+            event_type = getattr(event, "type", None)
+
+            if event_type == "response.output_text.delta":
+                result.text += event.delta
+                yield event.delta
+
+            # Collect citations from web search
+            elif event_type == "response.output_text.annotation.added":
+                ann = getattr(event, "annotation", None)
+                if ann and getattr(ann, "type", None) == "url_citation":
+                    url = getattr(ann, "url", "")
+                    title = getattr(ann, "title", url)
+                    if url and url not in [c.split(" - ")[0] for c in citations]:
+                        citations.append(f"{url} - {title}")
+
+            # Capture usage stats at the end
+            elif event_type == "response.completed":
+                resp = getattr(event, "response", None)
+                if resp:
+                    usage = getattr(resp, "usage", None)
+                    if usage:
+                        result.input_tokens = getattr(usage, "input_tokens", 0)
+                        result.output_tokens = getattr(usage, "output_tokens", 0)
+                        result.total_tokens = getattr(usage, "total_tokens", 0)
+                        result.cost_usd = self._calculate_cost(
+                            model, result.input_tokens, result.output_tokens
+                        )
+                        self.session_tokens += result.total_tokens
+                        self.session_cost += result.cost_usd
+
+        result.citations = citations
+        yield result
+</file>
+
+<file path=".gitignore">
+.venv/
+__pycache__/
+.DS_Store
+*.egg-info/
+</file>
+
+<file path="pyproject.toml">
+[project]
+name = "adds-ai-terminal"
+version = "0.1.0"
+description = "Terminal-first AI chat appliance for ADDS serial terminals and PTY simulation."
+authors = [{ name = "James LePage" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.52.0",
+  "pyyaml>=6.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+Homepage = "https://example.com"
+</file>
+
+<file path="scripts/run_dev.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+./scripts/pty_pair.sh >/dev/null
+APP_TTY="$(sed -n '1p' /tmp/adds_ai_ptys.txt)"
+MON_TTY="$(sed -n '2p' /tmp/adds_ai_ptys.txt)"
+SOCAT_PID_FILE="/tmp/adds_ai_socat.pid"
+
+echo "App TTY: $APP_TTY"
+echo "Monitor TTY: $MON_TTY"
+echo "Launching monitor (screen) in detached session 'adds_ai_monitor'. Attach with: screen -r adds_ai_monitor"
+
+cleanup() {
+  if [[ -n "${SCREEN_PID:-}" ]]; then
+    screen -S adds_ai_monitor -X quit 2>/dev/null || true
+  fi
+  if [[ -f "$SOCAT_PID_FILE" ]] && kill -0 "$(cat "$SOCAT_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$SOCAT_PID_FILE")" 2>/dev/null || true
+    rm -f "$SOCAT_PID_FILE"
+  fi
+}
+trap cleanup EXIT
+
+# Launch monitor in detached screen session
+if screen -dmS adds_ai_monitor "$MON_TTY" 9600; then
+  SCREEN_PID=adds_ai_monitor
+else
+  echo "screen failed to start. Manually run: screen \"$MON_TTY\" 9600" >&2
+  SCREEN_PID=""
+fi
+
+# Run app against the other PTY
+ADDS_COLS="${ADDS_COLS:-80}" ADDS_ROWS="${ADDS_ROWS:-24}" python -m adds_ai.app --tty "$APP_TTY"
+</file>
+
+<file path="data/presets.yaml">
+coding:
+  name: "Coding"
+  prompt: |
+    Provide code in short blocks. Prefer Python and shell examples. Explain briefly.
+
+research:
+  name: "Research"
+  prompt: |
+    Ask clarifying questions only if required. Otherwise, provide best-effort synthesis.
+
+ops:
+  name: "Ops"
+  prompt: |
+    Focus on commands, checks, and troubleshooting steps.
+
+tutorial:
+  name: "Tutorial"
+  prompt: |
+    You are explaining AMBER AI (formerly ADDS AI) - a retro-styled AI chat interface designed for vintage serial terminals (80x24, ANSI/VT-style).
+
+    Cover these topics thoroughly:
+
+    WHAT IS AMBER AI?
+    - A terminal-based AI chat running on vintage serial displays (ADDS/VT100-class)
+    - Connects over PTY pairs in dev or RS-232 hardware (e.g., ADDS 4000) with screen/minicom
+    - Supports streaming responses, presets, knowledge base retrieval, and minimal ANSI output
+
+    SETUP:
+    - Clone repo, install deps: pip install -e .
+    - Set OPENAI_API_KEY in your shell
+    - Run: ./scripts/run_dev.sh (spins PTY pair + app + screen monitor)
+    - Attach monitor: screen -r adds_ai_monitor
+    - Target hardware: use --tty /dev/ttyUSB0 on a Pi with the serial terminal attached
+
+    COMMANDS:
+    - /help - show available commands
+    - /new - start fresh conversation (clears history)
+    - /clear - clear screen only (keeps history)
+    - /preset [name] - switch prompt preset (coding, research, ops, tutorial)
+    - /model [name] - change LLM model (default gpt-5.2-2025-12-11; gpt-5-nano-2025-08-07 available; gpt-4* blocked)
+    - /ctx - toggle knowledge base context on/off
+    - /tutorial - show this guide
+    - /search [query] - web search with citations
+    - /quit - exit chat
+    - ESC - interrupt AI response mid-stream
+
+    FEATURES:
+    - Streaming responses with live updates
+    - Multiple prompt presets for different tasks
+    - Local knowledge base for context injection
+    - Web search with citations (when enabled)
+    - Splash/login screen collects operator name; first user message is personalized with that name in system context
+    - Works within strict 80x24, ASCII-first UI for real serial terminals
+
+    Be enthusiastic but concise. This is a cool retro project!
+
+default:
+  name: "Default"
+  prompt: |
+    Be concise, terminal-friendly, and avoid filler. Keep outputs short for 80x24; prefer tight bullet lists over long prose.
+    When the user says “search” or asks for current/latest/news, call web search immediately and cite sources; only ask for clarifying details if the topic is ambiguous.
+</file>
+
+<file path="src/adds_ai/config.py">
+import os
+from dataclasses import dataclass
+
+
+@dataclass
+class AppConfig:
+    cols: int
+    rows: int
+    model: str
+    refresh_ms: int
+    no_ansi: bool
+    preset: str | None
+
+
+def load_config() -> AppConfig:
+    cols = int(os.getenv("ADDS_COLS", "80"))
+    rows = int(os.getenv("ADDS_ROWS", "24"))
+    model = os.getenv("OPENAI_MODEL", "gpt-5.2-2025-12-11")
+    refresh_ms = int(os.getenv("ADDS_REFRESH_MS", "100"))
+    no_ansi = os.getenv("ADDS_NO_ANSI", "0") == "1"
+    preset = os.getenv("ADDS_PRESET")
+    return AppConfig(cols=cols, rows=rows, model=model, refresh_ms=refresh_ms, no_ansi=no_ansi, preset=preset)
+</file>
+
+<file path="README.md">
+# ADDS AI Terminal (Serial TTY Chat Appliance)
+
+This project turns a vintage RS-232 text terminal (e.g., ADDS 4000/260) into a modern AI chat console.
+
+![Terminal Example (hotlink)](https://i.ebayimg.com/images/g/R3MAAOSwi0lg03aS/s-l1600.webp)
+
+It is built to be:
+- **Faithful to real serial terminals**: the app renders to a TTY device (PTY in dev; `/dev/ttyUSB0` on the Pi).
+- **Deployable as an appliance**: runs on a Raspberry Pi, outputs directly to the terminal over RS-232.
+- **Open-source friendly**: minimal dependencies, deterministic UI, and clean separation of UI vs. LLM backend.
+
+## What this is actually for
+
+Most “AI chat” UIs assume a modern terminal emulator with full Unicode and fast redraw. Vintage terminals are different:
+- limited character sets
+- limited ANSI features
+- serial latency and flow control
+- strict 80×24 ergonomics
+
+This project is a reference implementation for building **LLM-powered, text-mode applications** that run on real serial terminals.
+
+## Key features
+
+- **ANSI/VT-style full-screen UI** designed for 80×24 terminals
+- **System prompt** support (global behavior and safety rules)
+- **Prompt presets** (switch personas/tasks quickly)
+- **Basic keyword retrieval** (local blurbs injected into the prompt)
+  - Example: query includes “James LePage” → inject stored blurb about James
+- **OpenAI Responses API** streaming (fast, modern API surface)
+
+## Hardware target
+
+- Raspberry Pi host (any Pi that can run Linux + Python)
+- RS-232 link to the terminal (USB-serial FTDI strongly preferred)
+- Terminal: ADDS 4000/260 or similar RS-232 “green screen” terminal
+
+The terminal is the display. The Pi is the host.
+
+## How it runs
+
+- **Local simulation (macOS)**: PTY pair + `screen` to mimic serial behavior.
+- **Real hardware (Pi + terminal)**: Same app targeting `/dev/ttyUSB0`; Pi talks RS-232 to the ADDS.
+
+## Quick start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+export OPENAI_API_KEY=...  # set your key
+./scripts/run_dev.sh       # spins PTY pair + screen + app
+```
+
+Deploy to Pi (USB serial on `/dev/ttyUSB0`):
+
+```bash
+PI_HOST=raspberrypi.local ./scripts/deploy_pi.sh
+ssh -t pi@"$PI_HOST" 'cd /opt/adds-ai && . .venv/bin/activate && \
+  OPENAI_API_KEY=... ADDS_COLS=80 ADDS_ROWS=24 python -m adds_ai.app --tty /dev/ttyUSB0'
+```
+
+For appliance mode, add `/etc/adds-ai.env` and enable `systemd/adds-ai.service`. See docs below.
+
+## Docs
+
+- Faithful serial dev loop: `docs/serial-dev.md`
+- Pi deployment and systemd: `docs/pi-deploy.md`
+- Terminal notes: `docs/adds-terminal.md`
+- Prompt/preset/retrieval data: `data/` folder (`system_prompt.txt`, `presets.yaml`, `kb.yaml`)
+
+## License
+
+MIT License.
+</file>
+
+<file path="data/system_prompt.txt">
+You are a helpful assistant running on a vintage serial terminal interface (80x24). Default model is gpt-5.2-2025-12-11 unless the user changes it.
+
+FORMATTING RULES (important - no markdown rendering available):
+- NO markdown formatting: no **bold**, *italic*, `code`, or # headers
+- Simple lists with - or 1. are OK
+- NO emoji or unicode symbols
+- NO code fences (```) - just indent code with 2 spaces instead
+- Keep responses concise and terminal-friendly
+- Minimize clarifying questions; be decisive and direct in responses.
+- When the user asks to search or for current events/news/latest info, call web search (tool) immediately; do not claim you cannot search. Cite sources when search is used. If a query is too vague, ask for a tighter topic and location, then search.
+- When citing sources, use inline numeric markers like [1], [2], then after a line with only '---' list sources as:
+  [1] title - url
+  [2] title - url
+  Do not include raw URLs in the main text—only in the sources list.
+</file>
+
+<file path="src/adds_ai/app.py">
 import argparse
 import os
 import select
@@ -40,14 +840,12 @@ class UI:
         preset: str,
         refresh_ms: int,
         no_ansi: bool,
-        text_mode: bool = False,
     ):
         self.cols, self.rows = cols, rows
         self.model = model
         self.preset = preset
         self.refresh_ms = refresh_ms
         self.no_ansi = no_ansi
-        self.text_mode = text_mode  # Line-oriented mode: no cursor, natural scroll
         self.lines: List[str] = []
         self.mode = "splash"  # splash | chat
         self.splash_input = ""
@@ -183,35 +981,6 @@ class UI:
         buf.append(f"[{self.status}]")
         buf.append("> " + self.input_buf)
         return ("\n".join(buf) + "\n").encode(errors="ignore")
-
-    def render_text_line(self, text: str) -> bytes:
-        """Render a single line for text mode (line-oriented, natural scroll)."""
-        # Wrap to column width and output with \r\n
-        lines = wrap(text, self.cols) or [""]
-        return ("\r\n".join(lines) + "\r\n").encode(errors="ignore")
-
-    def render_text_clear(self) -> bytes:
-        """Clear screen in text mode by scrolling content off."""
-        # Print enough blank lines to push ALL content off screen
-        return b"\r\n" * 50
-
-    def render_text_banner(self) -> bytes:
-        """Render startup banner for text mode."""
-        banner = [
-            "",
-            "=" * self.cols,
-            "AMBER AI Terminal".center(self.cols),
-            f"Model: {self.model}".center(self.cols),
-            "=" * self.cols,
-            "",
-            "Commands: /help /new /clear /quit /search <query>",
-            "",
-        ]
-        return ("\r\n".join(banner) + "\r\n").encode(errors="ignore")
-
-    def render_text_prompt(self) -> bytes:
-        """Render input prompt for text mode."""
-        return f"> {self.input_buf}".encode(errors="ignore")
 
     def render_splash(self) -> bytes:
         art = [
@@ -374,93 +1143,6 @@ class UI:
         self.splash_input = ""
 
 
-def do_stream_text(
-    ui: UI,
-    llm: OpenAIClient,
-    fd: int,
-    system_prompt: str,
-    preset_text: str,
-    user_msg: str,
-    kb,
-    web_search: bool = False,
-) -> None:
-    """Text mode streaming - line-oriented, no cursor addressing."""
-    from .ttyio import read_bytes, write_bytes
-
-    # Line break before AI response
-    write_bytes(fd, b"\r\n")
-
-    matches = find_matches(kb, user_msg)
-    ui.last_matches = [m[0] for m in matches]
-    retrieval_context = format_context(matches) if ui.show_ctx else ""
-
-    # Auto-enable web search for news/current queries
-    needs_web = web_search
-    if not needs_web:
-        text_l = user_msg.lower()
-        web_triggers = ["news", "headline", "latest", "current", "today", "search"]
-        if any(t in text_l for t in web_triggers):
-            needs_web = True
-
-    system_block_parts = [system_prompt, preset_text]
-    if not ui.personalization_sent and ui.personalization_note:
-        system_block_parts.append(ui.personalization_note)
-    if web_search:
-        system_block_parts.append(
-            "Use web search. Give a direct, factual 1-2 sentence answer. No hedging or disclaimers. ASCII only, no special characters."
-        )
-    if retrieval_context:
-        system_block_parts.append(retrieval_context)
-    system_block = "\n\n".join([p for p in system_block_parts if p]).strip()
-
-    payload = [{"role": "system", "content": system_block}]
-    payload.extend(ui.history)
-    payload.append({"role": "user", "content": user_msg})
-    ui.add_to_history("user", user_msg)
-
-    stream = llm.stream(model=ui.model, input_payload=payload, web_search=needs_web)
-
-    # Stream directly to terminal, character by character
-    col = 0
-    last_was_newline = False
-    out: List[str] = []
-    final_result: StreamResult | None = None
-
-    for event in stream:
-        # Check for ESC (interrupt)
-        r, _, _ = select.select([fd], [], [], 0)
-        if r:
-            ch = read_bytes(fd, 1)
-            if ch and ch[0] == 27:
-                write_bytes(fd, b" [stopped]\r\n")
-                ui.interrupted = True
-                break
-
-        if isinstance(event, str):
-            out.append(event)
-            # Output ASCII only, newlines become spaces, let terminal wrap
-            for char in event:
-                if char == '\n':
-                    write_bytes(fd, b" ")
-                elif 32 <= ord(char) <= 126:
-                    write_bytes(fd, char.encode())
-        elif isinstance(event, StreamResult):
-            final_result = event
-
-    # End the response with blank line before next prompt
-    write_bytes(fd, b"\r\n\r\n")
-
-    response_text = "".join(out).strip()
-    ui.add_to_history("assistant", response_text)
-
-    if final_result:
-        ui.session_tokens = llm.session_tokens
-        ui.session_cost = llm.session_cost
-
-    if not ui.personalization_sent and ui.personalization_note:
-        ui.personalization_sent = True
-
-
 def do_stream(
     ui: UI,
     llm: OpenAIClient,
@@ -593,204 +1275,18 @@ def parse_args():
     ap.add_argument("--model", default=env.model)
     ap.add_argument("--refresh-ms", type=int, default=env.refresh_ms)
     ap.add_argument("--no-ansi", action="store_true", default=env.no_ansi)
-    ap.add_argument(
-        "--text-mode",
-        action="store_true",
-        default=env.text_mode,
-        help="Line-oriented text mode for native terminals (no cursor addressing)",
-    )
     ap.add_argument("--preset", default=env.preset, help="Prompt preset name")
     return ap.parse_args(), env
-
-
-def text_mode_main(args, presets, preset_name, preset_text, system_prompt, kb):
-    """Text mode main loop - line-oriented, no cursor addressing."""
-    import os as _os
-
-    fd = open_tty(args.tty)
-    ui = UI(
-        cols=args.cols,
-        rows=args.rows,
-        model=args.model,
-        preset=preset_name,
-        refresh_ms=args.refresh_ms,
-        no_ansi=True,
-        text_mode=True,
-    )
-    ui.mode = "chat"  # Skip splash in text mode
-    ui.user_label = "USER"
-    ui.user_name = "User"
-
-    llm = OpenAIClient()
-
-    # Set up FIFO for SSH input (in addition to serial input)
-    # Use O_RDWR to keep FIFO open even when writers disconnect
-    fifo_path = "/tmp/adds-ai-input"
-    try:
-        _os.unlink(fifo_path)
-    except FileNotFoundError:
-        pass
-    _os.mkfifo(fifo_path)
-    fifo_fd = _os.open(fifo_path, _os.O_RDWR | _os.O_NONBLOCK)
-
-    # Clear screen and print banner
-    write_bytes(fd, ui.render_text_clear())
-    write_bytes(fd, ui.render_text_banner())
-    write_bytes(fd, b"> ")
-
-    input_buf = ""
-    input_fds = [fd, fifo_fd]  # Listen on both serial and FIFO
-
-    while True:
-        r, _, _ = select.select(input_fds, [], [], 0.1)
-        if not r:
-            continue
-
-        # Check FIFO first (SSH input) - read full lines
-        if fifo_fd in r:
-            try:
-                data = _os.read(fifo_fd, 1024)
-                if data:
-                    # Process each line from FIFO
-                    lines = data.decode(errors="ignore").split("\n")
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if line.startswith("/"):
-                            cmd = line.split()
-                            if cmd[0] in ("/q", "/quit"):
-                                write_bytes(fd, b"Goodbye.\r\n")
-                                _os.close(fifo_fd)
-                                _os.unlink(fifo_path)
-                                return
-                            elif cmd[0] == "/clear":
-                                write_bytes(fd, ui.render_text_clear())
-                                write_bytes(fd, ui.render_text_banner())
-                            elif cmd[0] == "/new":
-                                ui.clear_history()
-                                write_bytes(fd, b"New conversation started.\r\n")
-                            elif cmd[0] == "/help":
-                                write_bytes(fd, b"Commands: /help /new /clear /quit /model /search\r\n")
-                            elif cmd[0] == "/model":
-                                if len(cmd) == 1:
-                                    write_bytes(fd, f"Model: {ui.model}\r\n".encode())
-                                else:
-                                    ui.model = " ".join(cmd[1:])
-                                    write_bytes(fd, f"Model set: {ui.model}\r\n".encode())
-                            elif cmd[0] == "/search":
-                                query = " ".join(cmd[1:]) if len(cmd) > 1 else ""
-                                if query:
-                                    write_bytes(fd, f"[search] {query}\r\n".encode())
-                                    do_stream_text(ui, llm, fd, system_prompt, preset_text, query, kb, web_search=True)
-                            else:
-                                write_bytes(fd, f"Unknown: {cmd[0]}\r\n".encode())
-                        else:
-                            # Echo user input for regular messages
-                            write_bytes(fd, f"{line}\r\n".encode())
-                            do_stream_text(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
-                        write_bytes(fd, b"> ")
-            except BlockingIOError:
-                pass
-            continue
-
-        # Serial port input (if keyboard connected)
-        if fd not in r:
-            continue
-
-        ch = read_bytes(fd, 1)
-        if not ch:
-            continue
-
-        c = ch[0]
-
-        # Enter - process input
-        if c in (10, 13):
-            write_bytes(fd, b"\r\n")
-            line = input_buf.strip()
-            input_buf = ""
-
-            if not line:
-                write_bytes(fd, b"> ")
-                continue
-
-            # Commands
-            if line.startswith("/"):
-                cmd = line.split()
-                if cmd[0] in ("/q", "/quit"):
-                    write_bytes(fd, b"Goodbye.\r\n")
-                    return
-                elif cmd[0] == "/clear":
-                    write_bytes(fd, ui.render_text_clear())
-                    write_bytes(fd, ui.render_text_banner())
-                elif cmd[0] == "/new":
-                    ui.clear_history()
-                    write_bytes(fd, b"New conversation started.\r\n")
-                elif cmd[0] == "/help":
-                    help_text = "Commands: /help /new /clear /quit /model [name] /search [query]\r\n"
-                    write_bytes(fd, help_text.encode())
-                elif cmd[0] == "/model":
-                    if len(cmd) == 1:
-                        write_bytes(fd, f"Current model: {ui.model}\r\n".encode())
-                    else:
-                        ui.model = " ".join(cmd[1:])
-                        write_bytes(fd, f"Model set to: {ui.model}\r\n".encode())
-                elif cmd[0] == "/search":
-                    query = " ".join(cmd[1:]) if len(cmd) > 1 else ""
-                    if not query:
-                        write_bytes(fd, b"Usage: /search <query>\r\n")
-                    else:
-                        write_bytes(fd, f"USER: [search] {query}\r\n".encode())
-                        do_stream_text(ui, llm, fd, system_prompt, preset_text, query, kb, web_search=True)
-                else:
-                    write_bytes(fd, f"Unknown command: {cmd[0]}\r\n".encode())
-                write_bytes(fd, b"> ")
-                continue
-
-            # Normal chat
-            write_bytes(fd, f"USER: {line}\r\n".encode())
-            do_stream_text(ui, llm, fd, system_prompt, preset_text, line, kb, web_search=False)
-            write_bytes(fd, b"> ")
-            continue
-
-        # Backspace
-        if c in (8, 127):
-            if input_buf:
-                input_buf = input_buf[:-1]
-                write_bytes(fd, b"\b \b")  # Erase character
-            continue
-
-        # Ctrl+U - clear line
-        if c == 21:
-            while input_buf:
-                write_bytes(fd, b"\b \b")
-                input_buf = input_buf[:-1]
-            continue
-
-        # Ignore other control chars
-        if c < 32:
-            continue
-
-        # Printable ASCII
-        if 32 <= c <= 126:
-            input_buf += chr(c)
-            write_bytes(fd, bytes([c]))  # Echo character
 
 
 def main():
     args, env = parse_args()
 
+    fd = open_tty(args.tty)
     presets = load_presets()
     preset_name, preset_text = select_preset(presets, args.preset)
     system_prompt = load_system_prompt()
     kb = load_kb()
-
-    # Text mode - use simplified line-oriented interface
-    if args.text_mode:
-        text_mode_main(args, presets, preset_name, preset_text, system_prompt, kb)
-        return
-
-    fd = open_tty(args.tty)
     ui = UI(
         cols=args.cols,
         rows=args.rows,
@@ -1033,3 +1529,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+</file>
+
+</files>
